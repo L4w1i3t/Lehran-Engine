@@ -75,6 +75,7 @@ runtime/SDL2_ttf.dll
 # Project builds (user-generated game builds)
 Projects/*/build/
 Projects/*/*.exe
+Projects/*
 
 # Temporary files
 *.tmp

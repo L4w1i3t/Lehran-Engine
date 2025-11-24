@@ -5,18 +5,41 @@ A custom Fire Emblem game creation engine with a comprehensive GUI for designing
 ## Features
 
 ### Timeline Editor
-- **Event Organization**: Plan and visualize the sequence of events in your game chronologically
-- **Event Types**: Story events, battles, cutscenes, character recruitment, support conversations, and more
-- **Event Details**: Track chapter, location, participants, and descriptions for each event
-- **Drag & Drop Reordering**: Easily reorganize events by dragging them in the list
-- **Color Coding**: Visual distinction between different event types
-- **Linked Content**: Connect timeline events to specific dialogue, maps, and characters
+- **Node-Based Visualization**: Visual timeline with branching story paths
+  - Drag-and-drop node positioning
+  - Color-coded event types (Story, Battle, Support, Cutscene, etc.)
+  - Connection lines showing sequential (solid) and choice branches (dashed gold)
+- **Event Organization**: Plan and visualize the sequence of events chronologically
+- **Event Details**: Track chapter, location, participants, and descriptions
+- **Context Menu Actions**: 
+  - Add Child Event (sequential progression)
+  - Add Choice Branch (branching paths)
+  - Delete nodes with confirmation
+- **Zoom Controls**: Zoom in/out/reset for large timelines
+- **Scrollable Interface**: Right panel with event details fits within window
+- **Linked Content**: Connect timeline events to story chapters and gameplay
 
 ### Story & Narrative Editor
-- **Chapters**: Create and manage game chapters with objectives, descriptions, and events
-- **Characters**: Design characters with names, titles, affiliations, and biographies
-- **Dialogue**: Build dialogue scenes with multiple speakers and branching options
-- **Support Conversations**: Create character support conversations (C/B/A/S ranks)
+- **Chapters**: Create and manage game chapters with objectives, descriptions, and maps
+  - Sequential chapter organization with up/down reordering
+  - Chapter events organized into three categories:
+    - **Pre-Chapter Story Events**: Cutscenes/dialogue before the mission
+    - **Gameplay Events**: Triggers during battle (unit spawns, reinforcements, dialogue)
+    - **Post-Chapter Story Events**: Cutscenes/dialogue after mission completion
+- **Event System**: Comprehensive event editor with:
+  - Event types (Cutscene, Dialogue, Narration, Unit Spawn, Reinforcements, etc.)
+  - Trigger conditions (Auto, Turn, Position, Talk, Enemy Defeated, HP Threshold, Custom)
+  - Background images and music per event
+  - Sequential dialogue lines with speaker, portrait, and text
+  - Visual indicator showing which event you're editing
+  - Drag-and-drop reordering within each event category
+- **Characters**: Design characters with:
+  - Auto-generated 8-digit unique IDs
+  - Names, titles, affiliations, and biographies
+  - Optional portrait images
+  - Multiple custom sprite variants (Idle, Attack, Promoted, etc.)
+  - Generic units can have empty portraits/sprites
+- **Support Conversations**: Framework for character support conversations (C/B/A/S ranks)
 
 ### Gameplay & Units Editor
 - **Classes**: Define character classes with base stats, movement, and types
@@ -106,16 +129,17 @@ Required Python packages:
    - Download the version for your OS
    - Note the installation path for configuration in the engine
 
-3. (Optional) Set up C++ engine development environment:
-   ```powershell
-   cd engine
-   .\setup_sdl.ps1
-   ```
-   This will set up vcpkg and install SDL2 libraries needed for engine development:
-   - SDL2 (graphics and input)
-   - SDL2_ttf (text rendering)
-   - SDL2_mixer (audio playback)
-   - Dependencies: libogg, libvorbis, wavpack, brotli, bzip2, freetype, libpng, zlib
+3. (Optional) C++ engine development:
+   - The engine uses vcpkg for dependency management
+   - Clone vcpkg into the Lehran directory:
+     ```powershell
+     cd Lehran
+     git clone https://github.com/microsoft/vcpkg.git
+     cd vcpkg
+     .\bootstrap-vcpkg.bat
+     ```
+   - Then build the engine using `quick_build.ps1` - it will automatically install SDL2 dependencies
+   - Subsequent builds don't require vcpkg setup
 
 ## Running the Engine
 
@@ -170,10 +194,27 @@ Or on Windows, double-click `Lehran GUI.bat`
 
 ### Designing Story Content
 
-1. Go to the **Story & Narrative** tab
-2. Use the **Chapters** sub-tab to create game chapters
-3. Add characters in the **Characters** sub-tab
-4. Design dialogue scenes and support conversations
+1. Go to the **Story** tab
+2. **Chapters Sub-tab**:
+   - Click "Add Chapter" to create a new chapter
+   - Fill in chapter details (name, number, objective, description, map)
+   - Use the three event category tabs:
+     - **Pre-Chapter Story**: Events before the mission (cutscenes, dialogue)
+     - **Gameplay Events**: Events during battle (spawns, reinforcements, dialogue)
+     - **Post-Chapter Story**: Events after the mission (rewards, cutscenes)
+   - For each event:
+     - Set event type and trigger condition
+     - Add background image and music (optional)
+     - Add sequential dialogue lines with speaker/portrait/text
+     - Use ↑↓ buttons to reorder events within each category
+   - Visual indicator shows which event's dialogue you're editing
+3. **Characters Sub-tab**:
+   - Click "Add Character" (auto-generates unique 8-digit ID)
+   - Fill in name, title, affiliation, description, and biography
+   - Optionally add portrait image
+   - Add multiple sprite variants with custom labels (Idle, Attack, Promoted, etc.)
+   - Generic units can leave portraits/sprites empty
+4. **Support Conversations Sub-tab**: (Framework for future implementation)
 
 ### Configuring Gameplay
 
@@ -230,10 +271,12 @@ Or on Windows, double-click `Lehran GUI.bat`
 
 1. Use **Build > Build Project** or press `Ctrl+B` to compile your game
 2. The build process will:
-   - Export all your story, gameplay, and timeline data to JSON
-   - Export audio assignments to `audio_assignments.json`
+   - Copy the entire `data` folder from your project (includes game_flow.json and scenes/)
+   - Export story data with pre/gameplay/post event structure
+   - Export gameplay data (classes, units, weapons, items)
+   - Export timeline data and audio assignments
    - Package the C++ game engine with your project data
-   - Copy required SDL2 libraries (including audio DLLs)
+   - Copy all 14 required DLLs (SDL2 + codecs) automatically
    - Copy all assets from your project's asset folders
    - Create a standalone executable in `Projects/[YourGame]/build/`
 3. Run your built game with **Build > Run Game** or press `F5`
@@ -241,13 +284,16 @@ Or on Windows, double-click `Lehran GUI.bat`
    - Custom splash screen with fade effects (3.5 seconds)
    - Title screen with your game's name and assigned music
    - Menu navigation (New Game/Load/Exit)
-   - Audio playback based on your assignments
-   - Graceful handling of missing audio files (no crashes)
+   - 5 save slots with JSON and binary backup formats
+   - Data-driven scene system (loads from JSON files)
+   - Background and music loading per scene
+   - Dialogue system with speaker names and text wrapping
+   - Platform-specific save directories (AppData on Windows)
+   - Graceful handling of missing assets (no crashes)
 5. The build folder contains:
    - Your game executable (renamed to your project name)
-   - SDL2.dll, SDL2_ttf.dll, SDL2_mixer.dll
-   - Audio codec DLLs (vorbis.dll, vorbisfile.dll, ogg.dll, wavpackdll.dll)
-   - data/ folder with all JSON files
+   - All 14 SDL2 and codec DLLs
+   - data/ folder with all JSON files including scenes/
    - assets/ folder with all your game assets
    - README.txt with instructions for players
 
@@ -275,55 +321,65 @@ This will recompile the engine and update the runtime.
 - `gui/asset_manager.py` - Asset browser, preview, and audio assignment system
 
 ### Game Runtime (C++ with SDL2)
-The engine exports project data to a C++ game runtime built with SDL2.
+The engine exports project data to a data-driven C++ game runtime built with SDL2.
 
 **Engine Components:**
-- `engine/main.cpp` - Core game engine with state machine
+- `engine/main.cpp` - Core game engine with modular architecture:
+  - **TextureManager**: Centralized image loading with caching (PNG/JPG)
+  - **SaveSlotScreen**: 5 save slots with New Game and Load Game modes
+  - **SceneManager**: Background rendering with fade transitions
+  - **DialogueSystem**: Text boxes with word wrapping, speaker names, portrait support
+  - **SaveManager**: Dual-format saves (JSON + binary) with platform-specific directories
+  - Data-driven scene system (loads from JSON files)
   - Splash screen with auto-fade transitions (3.5 seconds)
   - Title screen with menu system
-  - JSON data loading (manifest, gameplay, story, timeline, audio_assignments)
   - SDL2 rendering and input handling
   - SDL_mixer audio system with OGG Vorbis support
-  - Dynamic music loading based on audio assignments
-  - Graceful audio failure handling (continues without audio if files missing)
-- `engine/CMakeLists.txt` - Build configuration with SDL2_mixer integration
-- `engine/build_engine.ps1` - Automated build script with DLL copying
-- `engine/setup_sdl.ps1` - vcpkg setup and SDL2 dependency installation
+  - Dynamic music/background loading from scene JSON
+  - Graceful audio failure handling (continues if files missing)
+  - No hardcoded assets - completely plug-and-play
+- `engine/CMakeLists.txt` - Build configuration using vcpkg for all dependencies
+- `engine/build_engine.ps1` - Automated build script with DLL management
 - `quick_build.ps1` - Convenient engine rebuild wrapper
+- `engine/include/` - Modular header files (TextureManager, SaveSlotScreen, SceneManager, DialogueSystem, SaveManager)
+- `engine/src/` - Implementation files for all engine systems
+
+**Dependency Management:**
+- Uses vcpkg for all C++ libraries (SDL2, SDL2_ttf, SDL2_image, SDL2_mixer)
+- vcpkg not included in repo - clone from https://github.com/microsoft/vcpkg.git
+- Bootstrap vcpkg, then dependencies auto-install on first engine build via CMake
+- All dependencies: SDL2, SDL2_ttf, SDL2_image, SDL2_mixer, libogg, libvorbis, wavpack, freetype, libpng, brotli, bzip2, zlib
+- No manual dependency downloads required
 
 **Runtime Structure:**
 - `runtime/LehranEngine.exe` - Compiled game engine executable
-- `runtime/SDL2.dll` - SDL2 graphics library
-- `runtime/SDL2_ttf.dll` - SDL2 text rendering library
-- `runtime/SDL2_mixer.dll` - SDL2 audio library
-- `runtime/vorbis.dll` - OGG Vorbis decoder
-- `runtime/vorbisfile.dll` - OGG file handling
-- `runtime/ogg.dll` - OGG container format
-- `runtime/wavpackdll.dll` - WavPack codec support
+- `runtime/*.dll` - All SDL2 libraries and codec DLLs (14 total):
+  - SDL2.dll, SDL2_ttf.dll, SDL2_image.dll, SDL2_mixer.dll
+  - Audio codecs: vorbis.dll, vorbisfile.dll, ogg.dll, wavpackdll.dll
+  - Image codecs: libpng16.dll, brotlicommon.dll, brotlidec.dll, bz2.dll
+  - Font rendering: freetype.dll, zlib1.dll
+- Build system automatically copies all required DLLs
 
 **Build Output (per project):**
 ```
 Projects/[YourGame]/build/
 ├── [YourGame].exe          # Standalone game executable
-├── SDL2.dll                # Graphics library
-├── SDL2_ttf.dll            # Font rendering library
-├── SDL2_mixer.dll          # Audio playback library
-├── vorbis.dll              # Audio codec
-├── vorbisfile.dll          # Audio codec
-├── ogg.dll                 # Audio codec
-├── wavpackdll.dll          # Audio codec
+├── *.dll (14 files)        # All SDL2 and codec libraries
 ├── data/
 │   ├── manifest.json       # Project metadata
-│   ├── story.json          # Chapters, characters, dialogue
+│   ├── story.json          # Chapters with pre/gameplay/post events, characters
 │   ├── gameplay.json       # Classes, units, weapons, items
-│   ├── timeline.json       # Event sequence
-│   └── audio_assignments.json  # Audio role mappings
+│   ├── timeline.json       # Event sequence and branches
+│   ├── audio_assignments.json  # Audio role mappings
+│   ├── game_flow.json      # Starting scene configuration
+│   └── scenes/
+│       └── *.json          # Individual scene definitions (dialogue, music, backgrounds)
 ├── assets/
 │   ├── bgm/                # Background music files
 │   ├── sfx/                # Sound effect files
 │   ├── portraits/          # Character portraits
 │   ├── sprites/            # Unit sprites
-│   ├── backgrounds/        # Background images
+│   ├── backgrounds/        # Scene background images
 │   ├── ui/                 # UI elements
 │   └── animations/         # Battle animations
 ├── maps/                   # Tiled maps (if any)
@@ -335,11 +391,36 @@ Projects/[YourGame]/build/
 ### .lehran Project Files
 JSON-based project files containing:
 - Project metadata (name, version, timestamps)
-- Timeline data (event sequence and organization)
-- Story data (chapters, characters, dialogue)
+- Timeline data (event sequence, branches, and node-based visualization)
+- Story data:
+  - Chapters with pre-chapter, gameplay, and post-chapter events
+  - Characters with unique IDs, portraits, and sprite variants
+  - Support conversations framework
 - Gameplay data (classes, units, weapons, items with type-specific properties)
 - Map references and configuration
 - Audio assignments (music and SFX role mappings)
+
+### Scene Format
+Data-driven scene JSON files in `data/scenes/`:
+```json
+{
+  "scene_id": "prologue_intro",
+  "name": "Prologue - Castle Approach",
+  "background": "backgrounds/castle.png",
+  "music": "bgm/tension.ogg",
+  "dialogue": [
+    {
+      "speaker": "Character Name",
+      "portrait": "portraits/character.png",
+      "text": "Dialogue line here..."
+    }
+  ],
+  "next_scene": "next_scene_id"
+}
+```
+- Scenes are completely data-driven (no hardcoding in engine)
+- `game_flow.json` defines the starting scene
+- Engine loads scenes dynamically from JSON files
 
 ### Audio Assignments Format
 The `audio_assignments.json` file maps game events to audio files:
@@ -367,38 +448,43 @@ The `audio_assignments.json` file maps game events to audio files:
 ### Completed
 - [x] Core GUI framework with PyQt6
 - [x] Project management system with .lehran format
-- [x] Timeline editor with drag-and-drop event visualization
-- [x] Story editor (chapters, characters, dialogue, support conversations)
+- [x] Timeline editor with node-based visualization and branching paths
+- [x] Story editor with comprehensive event system:
+  - [x] Chapters with pre/gameplay/post event categories
+  - [x] Sequential event ordering with visual reordering (↑↓)
+  - [x] Event-based dialogue system (dialogue tied to specific events)
+  - [x] Background and music per event
+  - [x] Visual indicator showing current event context
+  - [x] Scrollable interface preventing window overflow
+- [x] Character system with unique IDs, portraits, and sprite variants
 - [x] Gameplay editor (classes, units, weapons, items with conditional properties)
 - [x] Drag-and-drop reordering for all gameplay elements
 - [x] Type-specific item properties (Consumable, Stat Booster, Promotion, Key, Special)
 - [x] Tiled integration for map editing
 - [x] Asset Manager with browser and preview
-- [x] Asset organization (automatic subfolder creation)
-- [x] Image preview (PNG, JPG, BMP, GIF)
-- [x] Audio preview with pygame (no ffmpeg required)
 - [x] Audio assignment system (link files to game events)
-- [x] C++ game runtime with SDL2
-- [x] SDL_mixer audio integration (OGG Vorbis support)
-- [x] Dynamic audio loading from JSON assignments
-- [x] Graceful audio failure handling
-- [x] Build and export system with one-click compilation
-- [x] Automated build scripts (quick_build.ps1, build_engine.ps1)
-- [x] DLL management for SDL2, SDL2_ttf, SDL2_mixer, and audio codecs
-- [x] Splash screen with fade effects (3.5 seconds)
-- [x] Title screen with menu system and assigned music
-- [x] JSON-based data pipeline (Editor → JSON → C++ Runtime)
-- [x] Standalone executable packaging with all dependencies
-- [x] Window title displays game name
+- [x] C++ game runtime with modular architecture:
+  - [x] TextureManager (image loading with caching)
+  - [x] SaveSlotScreen (5 slots, New Game/Load Game)
+  - [x] SceneManager (backgrounds with fade transitions)
+  - [x] DialogueSystem (text wrapping, speaker names, portraits)
+  - [x] SaveManager (JSON + binary, platform-specific directories)
+- [x] Data-driven scene system (no hardcoded assets)
+- [x] SDL2, SDL2_ttf, SDL2_image, SDL2_mixer integration
+- [x] vcpkg dependency management (automatic setup)
+- [x] Dynamic scene loading from JSON files
+- [x] game_flow.json for starting scene configuration
+- [x] Build system with automatic DLL copying (all 14 libraries)
+- [x] Graceful handling of missing assets (no crashes)
+- [x] Splash screen and title screen
 - [x] Console-free release builds
-- [x] Audio timing control (music plays on title screen, not splash)
-- [x] "(None)" audio option respected (no fallback when explicitly disabled)
+- [x] No fallback audio when "(None)" selected
 
 ### In Progress / Future
-- [ ] Additional audio roles (gameplay sounds, ambient audio)
-- [ ] Volume controls in audio assignments
-- [ ] Music crossfade and transition effects
-- [ ] Dialogue tree editor with branching logic
+- [ ] Scene JSON export from GUI (currently manual)
+- [ ] Portrait rendering in dialogue system
+- [ ] Choice/branching dialogue with save prompts
+- [ ] Scene chaining (next_scene navigation)
 - [ ] Map rendering from Tiled files in game runtime
 - [ ] Unit placement and movement system
 - [ ] Combat system implementation
@@ -406,55 +492,11 @@ The `audio_assignments.json` file maps game events to audio files:
 - [ ] Battle animations
 - [ ] Character progression and stats
 - [ ] AI for enemy units
-- [ ] Game state persistence (save/load system)
+- [ ] Additional game states (base, shop, battle prep)
+- [ ] Volume controls in audio assignments
+- [ ] Music crossfade and transition effects
 - [ ] Testing and debugging tools
-
-## Contributing
-
-This is a fan project for educational and creative purposes. Contributions welcome!
 
 ## License
 
 This is a fan project. Fire Emblem is © Intelligent Systems/Nintendo.
-
-## Technical Details
-
-### Technologies Used
-- **PyQt6** - GUI framework for the editor
-- **pygame** - Audio preview in Asset Manager (self-contained, no ffmpeg required)
-- **Python 3.8+** - Editor scripting language
-- **C++17** - Game runtime language
-- **SDL2** - Graphics, input, and rendering
-- **SDL2_ttf** - Text rendering with TrueType fonts
-- **SDL2_mixer** - Audio playback and mixing
-- **OGG Vorbis** - Audio compression codec (via libogg, libvorbis)
-- **nlohmann/json** - JSON parsing in C++
-- **CMake** - C++ build system
-- **vcpkg** - C++ package manager for SDL2 dependencies
-- **Tiled Map Editor** - Map creation tool
-
-### Key Features
-- **Portable Build System**: Uses relative paths for cross-user compatibility
-- **Automated Compilation**: PowerShell scripts handle C++ build process
-- **No Console Window**: Release builds run without debug console
-- **Dynamic Window Title**: Shows your game's name, not "Lehran Engine"
-- **JSON Data Pipeline**: Clean separation between editor and runtime
-- **SDL2 Integration**: Hardware-accelerated rendering with vsync
-- **Audio System**: Full SDL_mixer integration with multiple codec support
-- **Self-Contained**: Built games include all necessary DLLs (no external dependencies)
-- **Graceful Degradation**: Missing assets don't crash the game
-- **Type-Safe Items**: Conditional UI shows only relevant properties per item type
-
-### Audio Technical Details
-- **Preview System**: Uses pygame.mixer in editor (no external codecs needed)
-- **Runtime System**: Uses SDL_mixer in C++ engine (native performance)
-- **Supported Formats**: OGG (recommended), WAV, MP3
-- **Sample Rate**: 44.1kHz stereo
-- **Buffer Size**: 2048 samples (low latency)
-- **Volume Control**: Default 50% music volume (MIX_MAX_VOLUME / 2)
-- **Looping**: Background music loops infinitely (-1 loop count)
-- **Assignment System**: JSON-based mapping (editor saves, engine loads)
-- **Fallback Logic**: 
-  - Empty string = no audio (user choice)
-  - Missing assignment = check defaults
-  - Missing file = log warning, continue silently

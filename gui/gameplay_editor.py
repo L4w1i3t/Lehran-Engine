@@ -14,8 +14,9 @@ from PyQt6.QtCore import Qt
 class GameplayEditor(QWidget):
     """Editor for gameplay elements"""
     
-    def __init__(self):
+    def __init__(self, story_editor=None):
         super().__init__()
+        self.story_editor = story_editor
         self.init_ui()
         
     def init_ui(self):
@@ -34,7 +35,7 @@ class GameplayEditor(QWidget):
         self.stats_widget = StatsWidget()
         
         # Now create units widget with references to other widgets
-        self.units_widget = UnitsWidget(self.classes_widget, self.weapons_widget, self.items_widget)
+        self.units_widget = UnitsWidget(self.classes_widget, self.weapons_widget, self.items_widget, self.story_editor)
         
         # Add tabs
         tabs.addTab(self.classes_widget, "Classes")
@@ -58,6 +59,12 @@ class GameplayEditor(QWidget):
         self.items_widget.item_list.model().rowsRemoved.connect(self.update_unit_inventory)
         self.items_widget.item_list.model().dataChanged.connect(self.update_unit_inventory)
         
+        # Connect character changes to update unit character dropdown
+        if self.story_editor:
+            self.story_editor.characters_widget.character_list.model().rowsInserted.connect(self.update_unit_characters)
+            self.story_editor.characters_widget.character_list.model().rowsRemoved.connect(self.update_unit_characters)
+            self.story_editor.characters_widget.character_list.model().dataChanged.connect(self.update_unit_characters)
+        
     def update_unit_classes(self):
         """Update the unit class dropdown when classes change"""
         self.units_widget.refresh_class_list()
@@ -65,6 +72,10 @@ class GameplayEditor(QWidget):
     def update_unit_inventory(self):
         """Update the unit inventory dropdowns when weapons/items change"""
         self.units_widget.refresh_inventory_items()
+    
+    def update_unit_characters(self):
+        """Update the unit character dropdown when characters change"""
+        self.units_widget.refresh_character_list()
         
     def get_data(self):
         """Get all gameplay data"""
@@ -78,11 +89,24 @@ class GameplayEditor(QWidget):
         
     def load_data(self, data):
         """Load gameplay data"""
-        self.classes_widget.load_data(data.get('classes', []))
-        self.units_widget.load_data(data.get('units', []))
-        self.weapons_widget.load_data(data.get('weapons', []))
-        self.items_widget.load_data(data.get('items', []))
-        self.stats_widget.load_data(data.get('stats', {}))
+        # Block signals during load to prevent triggering change detection
+        self.classes_widget.class_list.blockSignals(True)
+        self.units_widget.unit_list.blockSignals(True)
+        self.weapons_widget.weapon_list.blockSignals(True)
+        self.items_widget.item_list.blockSignals(True)
+        
+        try:
+            self.classes_widget.load_data(data.get('classes', []))
+            self.units_widget.load_data(data.get('units', []))
+            self.weapons_widget.load_data(data.get('weapons', []))
+            self.items_widget.load_data(data.get('items', []))
+            self.stats_widget.load_data(data.get('stats', {}))
+        finally:
+            # Always restore signals
+            self.classes_widget.class_list.blockSignals(False)
+            self.units_widget.unit_list.blockSignals(False)
+            self.weapons_widget.weapon_list.blockSignals(False)
+            self.items_widget.item_list.blockSignals(False)
 
 
 class ClassesWidget(QWidget):
@@ -467,11 +491,12 @@ class ClassesWidget(QWidget):
 class UnitsWidget(QWidget):
     """Widget for managing units"""
     
-    def __init__(self, classes_widget, weapons_widget, items_widget):
+    def __init__(self, classes_widget, weapons_widget, items_widget, story_editor=None):
         super().__init__()
         self.classes_widget = classes_widget
         self.weapons_widget = weapons_widget
         self.items_widget = items_widget
+        self.story_editor = story_editor
         self.units = []
         self.init_ui()
         
@@ -522,12 +547,26 @@ class UnitsWidget(QWidget):
         self.unit_level.setRange(1, 30)
         self.unit_level.setValue(1)
         
+        # Character link (optional)
+        self.unit_character = QComboBox()
+        self.unit_character.setEditable(False)
+        self.refresh_character_list()
+        
         # Populate class list from classes widget
         self.refresh_class_list()
         
         basic_layout.addRow("Name:", self.unit_name)
         basic_layout.addRow("Class:", self.unit_class)
         basic_layout.addRow("Level:", self.unit_level)
+        
+        # Add character link row with info label
+        char_link_layout = QVBoxLayout()
+        char_link_layout.addWidget(self.unit_character)
+        char_info = QLabel("Link this unit to a character for tracking story flags (death, recruitment, etc.)")
+        char_info.setWordWrap(True)
+        char_info.setStyleSheet("color: #666; font-size: 10px;")
+        char_link_layout.addWidget(char_info)
+        basic_layout.addRow("Linked Character:", char_link_layout)
         
         basic_group.setLayout(basic_layout)
         right_layout.addWidget(basic_group)
@@ -654,6 +693,7 @@ class UnitsWidget(QWidget):
             'name': 'New Unit',
             'class': 'Soldier',
             'level': 1,
+            'character_id': '',  # Link to character by ID
             'faction': 'Player',
             'is_lord': False,
             'is_boss': False,
@@ -751,6 +791,7 @@ class UnitsWidget(QWidget):
                 self.unit_name.textChanged.disconnect()
                 self.unit_class.currentTextChanged.disconnect()
                 self.unit_level.valueChanged.disconnect()
+                self.unit_character.currentTextChanged.disconnect()
                 self.unit_faction.currentTextChanged.disconnect()
                 self.unit_is_lord.stateChanged.disconnect()
                 self.unit_is_boss.stateChanged.disconnect()
@@ -782,6 +823,18 @@ class UnitsWidget(QWidget):
             self.unit_name.setText(unit['name'])
             self.unit_class.setCurrentText(unit.get('class', 'Soldier'))
             self.unit_level.setValue(unit.get('level', 1))
+            
+            # Set character link (backward compatible)
+            character_id = unit.get('character_id', '')
+            if character_id:
+                # Find character by ID and set combo box
+                index = self.unit_character.findData(character_id)
+                if index >= 0:
+                    self.unit_character.setCurrentIndex(index)
+                else:
+                    self.unit_character.setCurrentIndex(0)  # (None)
+            else:
+                self.unit_character.setCurrentIndex(0)  # (None)
             
             # Faction and flags
             self.unit_faction.setCurrentText(unit.get('faction', 'Player'))
@@ -823,6 +876,7 @@ class UnitsWidget(QWidget):
             self.unit_name.textChanged.connect(lambda text: self.update_unit_data(index))
             self.unit_class.currentTextChanged.connect(lambda text: self.update_unit_data(index))
             self.unit_level.valueChanged.connect(lambda val: self.update_unit_data(index))
+            self.unit_character.currentTextChanged.connect(lambda text: self.update_unit_data(index))
             self.unit_faction.currentTextChanged.connect(lambda text: self.update_unit_faction(index))
             self.unit_is_lord.stateChanged.connect(lambda state: self.update_unit_data(index))
             self.unit_is_boss.stateChanged.connect(lambda state: self.update_unit_data(index))
@@ -853,6 +907,11 @@ class UnitsWidget(QWidget):
             unit['name'] = self.unit_name.text()
             unit['class'] = self.unit_class.currentText()
             unit['level'] = self.unit_level.value()
+            
+            # Save character ID link
+            character_id = self.unit_character.currentData()
+            unit['character_id'] = character_id if character_id else ''
+            
             unit['faction'] = self.unit_faction.currentText()
             unit['is_lord'] = self.unit_is_lord.isChecked()
             unit['is_boss'] = self.unit_is_boss.isChecked()
@@ -959,6 +1018,31 @@ class UnitsWidget(QWidget):
                 combo.setCurrentText(current_selections[i])
             else:
                 combo.setCurrentText("(Empty)")
+
+
+    def refresh_character_list(self):
+        """Refresh the character dropdown from the story editor"""
+        current_char_id = self.unit_character.currentData()
+        self.unit_character.clear()
+        
+        # Add "(None)" option
+        self.unit_character.addItem("(None - Generic Unit)", None)
+        
+        # Get characters from story editor if available
+        if self.story_editor:
+            characters = self.story_editor.characters_widget.get_data()
+            if characters:
+                for char in characters:
+                    char_id = char.get('id', '')
+                    char_name = char.get('name', 'Unknown')
+                    if char_id:
+                        self.unit_character.addItem(f"{char_name} (ID: {char_id})", char_id)
+                
+                # Try to restore previous selection
+                if current_char_id:
+                    index = self.unit_character.findData(current_char_id)
+                    if index >= 0:
+                        self.unit_character.setCurrentIndex(index)
 
 
 class WeaponsWidget(QWidget):

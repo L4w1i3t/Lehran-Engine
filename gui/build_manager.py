@@ -48,10 +48,18 @@ class BuildThread(QThread):
             if os.path.exists(maps_src):
                 shutil.copytree(maps_src, maps_dst, dirs_exist_ok=True)
             
-            # Step 4: Export game data
-            self.progress.emit(30, "Exporting game data...")
+            # Step 4: Copy data folder (includes game_flow.json, scenes/, etc.)
+            self.progress.emit(30, "Copying game data...")
+            data_src = os.path.join(project_path, 'data')
             data_dst = os.path.join(build_path, 'data')
-            os.makedirs(data_dst, exist_ok=True)
+            if os.path.exists(data_src):
+                shutil.copytree(data_src, data_dst, dirs_exist_ok=True)
+            else:
+                # Create data folder if it doesn't exist
+                os.makedirs(data_dst, exist_ok=True)
+            
+            # Step 5: Export GUI data (story, gameplay, timeline)
+            self.progress.emit(35, "Exporting editor data...")
             
             # Export story data
             story_file = os.path.join(data_dst, 'story.json')
@@ -74,8 +82,8 @@ class BuildThread(QThread):
             with open(audio_file, 'w', encoding='utf-8') as f:
                 json.dump(audio_assignments, f, indent=2)
             
-            # Step 5: Create game manifest
-            self.progress.emit(35, "Creating game manifest...")
+            # Step 6: Create game manifest
+            self.progress.emit(40, "Creating game manifest...")
             manifest = {
                 'name': self.project_data['name'],
                 'version': self.project_data['version'],
@@ -92,8 +100,8 @@ class BuildThread(QThread):
             data_manifest = os.path.join(data_dst, 'manifest.json')
             shutil.copy2(manifest_file, data_manifest)
             
-            # Step 6: Copy C++ game engine runtime
-            self.progress.emit(40, "Copying game engine runtime...")
+            # Step 7: Copy C++ game engine runtime
+            self.progress.emit(50, "Copying game engine runtime...")
             runtime_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'runtime')
             
             # Copy engine executable
@@ -104,30 +112,22 @@ class BuildThread(QThread):
             else:
                 raise Exception("Engine runtime not found. Please build the C++ engine first.")
             
-            # Copy SDL2 DLLs
+            # Copy all DLLs from runtime folder
             self.progress.emit(50, "Copying required DLLs...")
-            dll_files = [
-                'SDL2.dll', 
-                'SDL2_ttf.dll',
-                'SDL2_mixer.dll',
-                'vorbis.dll',
-                'vorbisfile.dll',
-                'ogg.dll',
-                'wavpackdll.dll'
-            ]
-            for dll in dll_files:
-                dll_src = os.path.join(runtime_src, dll)
-                dll_dst = os.path.join(build_path, dll)
-                if os.path.exists(dll_src):
+            dll_count = 0
+            for file in os.listdir(runtime_src):
+                if file.endswith('.dll'):
+                    dll_src = os.path.join(runtime_src, file)
+                    dll_dst = os.path.join(build_path, file)
                     shutil.copy2(dll_src, dll_dst)
-                else:
-                    # Non-critical DLLs (audio dependencies) - warn but don't fail
-                    if dll not in ['SDL2.dll', 'SDL2_ttf.dll']:
-                        self.progress.emit(50, f"Warning: {dll} not found (audio may not work)")
-                    else:
-                        raise Exception(f"Required DLL not found: {dll}")
+                    dll_count += 1
             
-            # Step 7: Create README
+            if dll_count == 0:
+                raise Exception("No DLL files found in runtime folder")
+            else:
+                self.progress.emit(60, f"Copied {dll_count} DLL files")
+            
+            # Step 8: Create README
             self.progress.emit(95, "Creating documentation...")
             readme_file = os.path.join(build_path, 'README.txt')
             with open(readme_file, 'w', encoding='utf-8') as f:
@@ -146,7 +146,7 @@ class BuildThread(QThread):
                 f.write("- maps/           : Level maps (if any)\n")
                 f.write("- manifest.json   : Build information\n")
             
-            # Step 8: Complete
+            # Step 9: Complete
             self.progress.emit(100, "Build complete!")
             self.finished.emit(True, f"Build created successfully!\n\nExecutable: {build_path}\\{self.project_data['name']}.exe\nBuild folder: {build_path}")
             

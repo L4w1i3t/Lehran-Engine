@@ -5,7 +5,19 @@ Browse, preview, and manage game assets
 
 import os
 import shutil
-import pygame
+import logging
+import traceback
+
+# Try to import pygame for audio preview (optional)
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+    print("Warning: pygame not available - audio preview will be disabled")
+
+logger = logging.getLogger(__name__)
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                               QTreeWidget, QTreeWidgetItem, QLabel, QPushButton,
                               QFileDialog, QGroupBox, QTextEdit, QMessageBox,
@@ -22,14 +34,8 @@ class AssetManager(QWidget):
         self.project_data = project_data
         self.current_asset_path = None
         self.audio_assignments = {}  # Maps roles to audio file paths
-        
-        # Initialize pygame mixer for audio playback
-        try:
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-            self.audio_available = True
-        except Exception as e:
-            print(f"Failed to initialize audio: {e}")
-            self.audio_available = False
+        self.audio_available = False
+        self.audio_initialized = False
         
         self.init_ui()
         
@@ -60,6 +66,7 @@ class AssetManager(QWidget):
         
         # Header with instructions
         header = QGroupBox("Asset Browser")
+        header.setMaximumHeight(120)
         header_layout = QVBoxLayout()
         
         instructions = QLabel(
@@ -347,65 +354,95 @@ class AssetManager(QWidget):
     
     def set_project(self, project_data):
         """Set the current project"""
-        self.project_data = project_data
-        self.refresh_assets()
-        self.populate_audio_dropdowns()
-        self.load_audio_assignments()
+        try:
+            logger.info("AssetManager: Setting project...")
+            self.project_data = project_data
+            
+            logger.info("AssetManager: Refreshing assets...")
+            self.refresh_assets()
+            
+            logger.info("AssetManager: Populating audio dropdowns...")
+            self.populate_audio_dropdowns()
+            
+            logger.info("AssetManager: Loading audio assignments...")
+            self.load_audio_assignments()
+            
+            logger.info("AssetManager: Project set successfully")
+        except Exception as e:
+            logger.error(f"AssetManager: Error setting project: {e}")
+            logger.error(traceback.format_exc())
+            raise
     
     def refresh_assets(self):
         """Refresh the asset tree"""
-        self.asset_tree.clear()
-        
-        if not self.project_data:
-            return
-        
-        assets_path = os.path.join(self.project_data['path'], 'assets')
-        
-        if not os.path.exists(assets_path):
-            os.makedirs(assets_path, exist_ok=True)
-        
-        # Asset categories
-        categories = [
-            ('bgm', 'Background Music'),
-            ('sfx', 'Sound Effects'),
-            ('portraits', 'Character Portraits'),
-            ('sprites', 'Unit Sprites'),
-            ('backgrounds', 'Backgrounds'),
-            ('ui', 'UI Elements'),
-            ('animations', 'Animations')
-        ]
-        
-        for folder_name, display_name in categories:
-            folder_path = os.path.join(assets_path, folder_name)
+        try:
+            logger.info("AssetManager: Clearing asset tree...")
+            self.asset_tree.clear()
             
-            # Create folder if it doesn't exist
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path, exist_ok=True)
+            if not self.project_data:
+                logger.info("AssetManager: No project data, skipping refresh")
+                return
             
-            # Create tree item
-            folder_item = QTreeWidgetItem(self.asset_tree, [display_name])
-            folder_item.setData(0, Qt.ItemDataRole.UserRole, folder_path)
+            assets_path = os.path.join(self.project_data['path'], 'assets')
+            logger.info(f"AssetManager: Assets path: {assets_path}")
             
-            # Add files in this folder
-            try:
-                files = os.listdir(folder_path)
-                for filename in sorted(files):
-                    file_path = os.path.join(folder_path, filename)
-                    if os.path.isfile(file_path):
-                        file_item = QTreeWidgetItem(folder_item, [filename])
-                        file_item.setData(0, Qt.ItemDataRole.UserRole, file_path)
-                        
-                        # Add icon/indicator based on file type
-                        ext = os.path.splitext(filename)[1].lower()
-                        if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']:
-                            file_item.setText(0, f"🖼️ {filename}")
-                        elif ext in ['.ogg', '.wav', '.mp3']:
-                            file_item.setText(0, f"🎵 {filename}")
-                        
-            except Exception as e:
-                print(f"Error reading folder {folder_path}: {e}")
-        
-        self.asset_tree.expandAll()
+            if not os.path.exists(assets_path):
+                logger.info(f"AssetManager: Creating assets directory...")
+                os.makedirs(assets_path, exist_ok=True)
+            
+            # Asset categories
+            categories = [
+                ('bgm', 'Background Music'),
+                ('sfx', 'Sound Effects'),
+                ('portraits', 'Character Portraits'),
+                ('sprites', 'Unit Sprites'),
+                ('backgrounds', 'Backgrounds'),
+                ('ui', 'UI Elements'),
+                ('animations', 'Animations')
+            ]
+            
+            for folder_name, display_name in categories:
+                folder_path = os.path.join(assets_path, folder_name)
+                
+                # Create folder if it doesn't exist
+                if not os.path.exists(folder_path):
+                    os.makedirs(folder_path, exist_ok=True)
+                
+                # Create tree item
+                folder_item = QTreeWidgetItem(self.asset_tree, [display_name])
+                folder_item.setData(0, Qt.ItemDataRole.UserRole, folder_path)
+                
+                # Add files in this folder
+                try:
+                    logger.info(f"AssetManager: Reading folder {folder_name}...")
+                    files = os.listdir(folder_path)
+                    logger.info(f"AssetManager: Found {len(files)} items in {folder_name}")
+                    
+                    for filename in sorted(files):
+                        file_path = os.path.join(folder_path, filename)
+                        if os.path.isfile(file_path):
+                            file_item = QTreeWidgetItem(folder_item, [filename])
+                            file_item.setData(0, Qt.ItemDataRole.UserRole, file_path)
+                            
+                            # Add icon/indicator based on file type
+                            ext = os.path.splitext(filename)[1].lower()
+                            if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']:
+                                file_item.setText(0, f"🖼️ {filename}")
+                            elif ext in ['.ogg', '.wav', '.mp3']:
+                                file_item.setText(0, f"🎵 {filename}")
+                            
+                except Exception as e:
+                    logger.error(f"AssetManager: Error reading folder {folder_path}: {e}")
+                    logger.error(traceback.format_exc())
+            
+            logger.info("AssetManager: Expanding asset tree...")
+            self.asset_tree.expandAll()
+            logger.info("AssetManager: Asset tree refresh complete")
+            
+        except Exception as e:
+            logger.error(f"AssetManager: Error in refresh_assets: {e}")
+            logger.error(traceback.format_exc())
+            raise
     
     def on_asset_selected(self, item, column):
         """Handle asset selection"""
@@ -467,6 +504,31 @@ class AssetManager(QWidget):
             self.preview_label.setText("Failed to load image")
             self.preview_label.setPixmap(QPixmap())
     
+    def init_audio(self):
+        """Initialize pygame audio (lazy initialization)"""
+        if self.audio_initialized:
+            return self.audio_available
+        
+        self.audio_initialized = True
+        
+        if not PYGAME_AVAILABLE:
+            print("Pygame not available - audio preview disabled")
+            self.audio_available = False
+            return False
+        
+        try:
+            # Try to initialize pygame audio with conservative settings
+            pygame.mixer.quit()  # Make sure mixer is stopped first
+            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=2048)
+            self.audio_available = True
+            print("Audio initialized successfully")
+        except Exception as e:
+            print(f"Failed to initialize audio: {e}")
+            print("Audio preview will be disabled")
+            self.audio_available = False
+        
+        return self.audio_available
+    
     def preview_audio(self, file_path):
         """Preview an audio file"""
         self.preview_label.setText(f"🎵 Audio File\n\n{os.path.basename(file_path)}\n\nClick Play to listen")
@@ -474,7 +536,22 @@ class AssetManager(QWidget):
     
     def play_audio(self):
         """Play the selected audio file"""
-        if not self.current_asset_path or not self.audio_available:
+        if not self.current_asset_path:
+            return
+        
+        # Initialize audio if not already done
+        if not self.audio_initialized:
+            if not self.init_audio():
+                QMessageBox.warning(
+                    self,
+                    "Audio Not Available",
+                    "Audio playback is not available on this system.\n\n"
+                    "This may be due to missing audio drivers or codecs.\n"
+                    "The editor will work normally, but audio preview is disabled."
+                )
+                return
+        
+        if not self.audio_available:
             return
         
         try:
@@ -485,15 +562,18 @@ class AssetManager(QWidget):
             QMessageBox.warning(
                 self,
                 "Audio Error",
-                f"Failed to play audio file:\n{str(e)}"
+                f"Failed to play audio file:\n{str(e)}\n\n"
+                "The file may be corrupted or in an unsupported format."
             )
     
     def stop_audio(self):
         """Stop audio playback"""
-        if self.audio_available:
+        if self.audio_available and self.audio_initialized:
             try:
                 pygame.mixer.music.stop()
-            except:
+            except Exception as e:
+                # Silently ignore errors when stopping audio
+                print(f"Error stopping audio: {e}")
                 pass
     
     def open_in_explorer(self):

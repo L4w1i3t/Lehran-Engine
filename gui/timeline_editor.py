@@ -82,19 +82,18 @@ class TimelineNode(QGraphicsRectItem):
         
         chapter_text = f"Ch.{chapter}" if chapter > 0 else "Prologue"
         
-        # Format text with better styling
-        text = (f"<div style='background-color: rgba(255, 255, 255, 0.85); padding: 2px; border-radius: 3px;'>"
-                f"<b style='color: #1a1a1a;'>{name}</b><br/>"
-                f"<i style='color: #444;'>{event_type}</i><br/>"
-                f"<span style='color: #555;'>{chapter_text}</span>"
-                f"</div>")
+        # Format text with theme-aware styling - use simple text without background
+        text = (f"<b>{name}</b><br/>"
+                f"<i>{event_type}</i><br/>"
+                f"{chapter_text}")
         self.text_item.setHtml(text)
         self.text_item.setTextWidth(self.width - 10)
         self.text_item.setPos(5, 5)
         
-        # Set font
+        # Set font and default text color (will be overridden by theme)
         font = QFont("Arial", 9)
         self.text_item.setFont(font)
+        self.text_item.setDefaultTextColor(QColor(0, 0, 0))
         
     def get_event_type_color(self, event_type):
         """Get color for event type"""
@@ -255,8 +254,8 @@ class TimelineScene(QGraphicsScene):
         # Set scene size
         self.setSceneRect(-2000, -2000, 4000, 4000)
         
-        # Draw grid background with subtle pattern
-        self.setBackgroundBrush(QBrush(QColor(240, 240, 240)))
+        # Background will be set by update_theme method
+        self.update_theme()
         
     def create_node(self, event_data, x, y):
         """Create a new node"""
@@ -349,6 +348,33 @@ class TimelineScene(QGraphicsScene):
             timeline_events.append(event_data)
             
         return timeline_events
+    
+    def update_theme(self):
+        """Update theme-dependent colors"""
+        from PyQt6.QtWidgets import QApplication
+        palette = QApplication.palette()
+        
+        # Get base color from palette
+        base_color = palette.color(palette.ColorRole.Base)
+        
+        # Set background based on theme
+        self.setBackgroundBrush(QBrush(base_color))
+        
+        # Update all nodes to use proper text colors
+        for node in self.nodes:
+            text_color = palette.color(palette.ColorRole.Text)
+            node.text_item.setDefaultTextColor(text_color)
+        
+        # Update connection line colors to be theme-aware
+        for connection in self.connections:
+            if connection.is_choice:
+                pen = QPen(QColor(255, 215, 0), 3, Qt.PenStyle.DashLine)
+            else:
+                # Use a neutral color that works in both themes
+                mid_color = palette.color(palette.ColorRole.Mid)
+                pen = QPen(mid_color, 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            connection.setPen(pen)
         
     def load_timeline_data(self, timeline_events):
         """Load timeline data and create nodes"""
@@ -450,11 +476,10 @@ class TimelineEditor(QWidget):
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.view.setMinimumWidth(600)
+        self.view.setMinimumWidth(500)
         
-        # Set view background - use both methods to ensure it works
-        self.view.setBackgroundBrush(QBrush(QColor(240, 240, 240)))
-        self.view.setStyleSheet("QGraphicsView { background-color: rgb(240, 240, 240); border: 1px solid #ccc; }")
+        # View background will be updated by update_theme
+        self.update_theme()
         
         splitter.addWidget(self.view)
         
@@ -462,7 +487,8 @@ class TimelineEditor(QWidget):
         right_widget = QWidget()
         right_layout = QVBoxLayout()
         right_widget.setLayout(right_layout)
-        right_widget.setMaximumWidth(400)
+        right_widget.setMaximumWidth(350)
+        right_widget.setMinimumWidth(300)
         
         details_group = QGroupBox("Event Details")
         details_layout = QFormLayout()
@@ -495,7 +521,7 @@ class TimelineEditor(QWidget):
         self.event_location.textChanged.connect(self.update_selected_node)
         
         self.event_description = QTextEdit()
-        self.event_description.setMaximumHeight(120)
+        self.event_description.setMaximumHeight(80)
         self.event_description.textChanged.connect(self.update_selected_node)
         
         self.event_participants = QLineEdit()
@@ -503,7 +529,7 @@ class TimelineEditor(QWidget):
         self.event_participants.textChanged.connect(self.update_selected_node)
         
         self.event_notes = QTextEdit()
-        self.event_notes.setMaximumHeight(80)
+        self.event_notes.setMaximumHeight(60)
         self.event_notes.textChanged.connect(self.update_selected_node)
         
         details_layout.addRow("Event Name:", self.event_name)
@@ -588,14 +614,18 @@ class TimelineEditor(QWidget):
         
     def on_selection_changed(self):
         """Handle node selection change"""
-        selected_items = self.scene.selectedItems()
-        
-        if selected_items and isinstance(selected_items[0], TimelineNode):
-            self.current_selected_node = selected_items[0]
-            self.load_node_details(self.current_selected_node)
-        else:
-            self.current_selected_node = None
-            self.clear_details()
+        try:
+            selected_items = self.scene.selectedItems()
+            
+            if selected_items and isinstance(selected_items[0], TimelineNode):
+                self.current_selected_node = selected_items[0]
+                self.load_node_details(self.current_selected_node)
+            else:
+                self.current_selected_node = None
+                self.clear_details()
+        except RuntimeError:
+            # Scene may have been deleted during reconstruction
+            pass
             
     def load_node_details(self, node):
         """Load node details into the form"""
@@ -654,6 +684,24 @@ class TimelineEditor(QWidget):
         
     def load_data(self, timeline_events):
         """Load timeline data"""
-        self.scene.load_timeline_data(timeline_events if timeline_events else [])
-        # Center view on content
-        self.view.centerOn(0, 0)
+        # Block signals during load to prevent triggering change detection
+        self.scene.blockSignals(True)
+        try:
+            self.scene.load_timeline_data(timeline_events if timeline_events else [])
+            # Center view on content
+            self.view.centerOn(0, 0)
+        finally:
+            # Always restore signals
+            self.scene.blockSignals(False)
+    
+    def update_theme(self):
+        """Update theme-dependent styling"""
+        from PyQt6.QtWidgets import QApplication
+        palette = QApplication.palette()
+        
+        # Update view background
+        base_color = palette.color(palette.ColorRole.Base)
+        self.view.setBackgroundBrush(QBrush(base_color))
+        
+        # Update scene theme
+        self.scene.update_theme()

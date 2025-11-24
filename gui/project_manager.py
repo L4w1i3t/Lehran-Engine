@@ -29,9 +29,9 @@ class ProjectManager:
         # Create project folder inside the selected path
         project_folder = os.path.join(project_data['path'], project_data['name'])
         
+        # Don't store absolute path in project file - it will be derived from .lehran file location
         project = {
             'name': project_data['name'],
-            'path': project_folder,
             'created': datetime.now().isoformat(),
             'modified': datetime.now().isoformat(),
             'version': '0.1',
@@ -89,6 +89,9 @@ class ProjectManager:
             
             with open(project_file, 'w', encoding='utf-8') as f:
                 json.dump(project, f, indent=4)
+            
+            # Add path back to the project data for runtime use (not saved to file)
+            project['path'] = project_folder
                 
             return project
             
@@ -101,7 +104,13 @@ class ProjectManager:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 project = json.load(f)
+            
+            # Always derive the project path from the .lehran file location (not stored in file)
+            actual_project_dir = os.path.dirname(os.path.abspath(file_path))
+            project['path'] = actual_project_dir
+            
             self.current_project_path = file_path
+            print(f"Project loaded from: {actual_project_dir}")
             return project
         except Exception as e:
             print(f"Error loading project: {e}")
@@ -113,9 +122,14 @@ class ProjectManager:
             return False
             
         try:
-            project_data['modified'] = datetime.now().isoformat()
+            # Create a copy of project data without the runtime 'path' field
+            # The path is always derived from the .lehran file location, not stored
+            save_data = {k: v for k, v in project_data.items() if k != 'path'}
+            
+            save_data['modified'] = datetime.now().isoformat()
+            
             with open(self.current_project_path, 'w', encoding='utf-8') as f:
-                json.dump(project_data, f, indent=4)
+                json.dump(save_data, f, indent=4)
             return True
         except Exception as e:
             print(f"Error saving project: {e}")

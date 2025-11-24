@@ -249,10 +249,17 @@ class MapEditor(QWidget):
         
     def load_data(self, data):
         """Load maps data"""
-        self.maps = data.get('map_files', [])
-        self.tiled_path = data.get('tiled_path', '')
-        self.tiled_path_input.setText(self.tiled_path)
+        # Block signals during load to prevent triggering change detection
+        self.map_list.blockSignals(True)
         
-        self.map_list.clear()
-        for map_data in self.maps:
-            self.map_list.addItem(map_data['name'])
+        try:
+            self.maps = data.get('map_files', [])
+            self.tiled_path = data.get('tiled_path', '')
+            self.tiled_path_input.setText(self.tiled_path)
+            
+            self.map_list.clear()
+            for map_data in self.maps:
+                self.map_list.addItem(map_data['name'])
+        finally:
+            # Always restore signals
+            self.map_list.blockSignals(False)

@@ -51,33 +51,33 @@ Write-Host ""
 # Step 2: Copy executable to runtime folder
 Write-Host "[2/3] Copying executable to runtime folder..." -ForegroundColor Yellow
 
-# Check both possible output locations
-$exeSrcRelease = Join-Path $runtimeDir "LehranEngine.exe"
-$exeSrcDebug = Join-Path $engineDir "runtime\Debug\LehranEngine.exe"
+# With updated CMakeLists, exe should be directly in runtime folder
 $exeDst = Join-Path $runtimeDir "LehranEngine.exe"
 
-# If already in the right place, we're good
-if (Test-Path $exeSrcRelease) {
-    Write-Host "Executable already in runtime folder" -ForegroundColor Green
-} elseif (Test-Path $exeSrcDebug) {
-    # Copy from Debug build
-    Copy-Item $exeSrcDebug $exeDst -Force
-    Write-Host "Copied LehranEngine.exe (Debug)" -ForegroundColor Green
+if (Test-Path $exeDst) {
+    Write-Host "Executable in runtime folder" -ForegroundColor Green
 } else {
-    Write-Host "ERROR: Compiled executable not found" -ForegroundColor Red
-    exit 1
+    # Check if it ended up in Release subfolder (old behavior)
+    $exeSrcRelease = Join-Path $runtimeDir "Release\LehranEngine.exe"
+    if (Test-Path $exeSrcRelease) {
+        Copy-Item $exeSrcRelease $exeDst -Force
+        Write-Host "Copied LehranEngine.exe from Release subfolder" -ForegroundColor Green
+    } else {
+        Write-Host "ERROR: Compiled executable not found" -ForegroundColor Red
+        Write-Host "  Expected: $exeDst" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # Step 3: Copy DLLs to runtime folder
-Write-Host "[3/3] Copying required DLLs..." -ForegroundColor Yellow
+Write-Host "[3/3] Copying required DLLs from vcpkg..." -ForegroundColor Yellow
 
-# SDL2 core DLLs
-$sdl2Dll = Join-Path $engineDir "deps\SDL2\lib\x64\SDL2.dll"
-$sdl2TtfDll = Join-Path $engineDir "deps\SDL2_ttf\lib\x64\SDL2_ttf.dll"
-
-# SDL2_mixer and its dependencies from vcpkg
+# All SDL2 DLLs now come from vcpkg
 $vcpkgBinDir = Join-Path $lehranRoot "vcpkg\installed\x64-windows\bin"
-$mixerDlls = @(
+$requiredDlls = @(
+    "SDL2.dll",
+    "SDL2_ttf.dll",
+    "SDL2_image.dll",
     "SDL2_mixer.dll",
     "vorbis.dll",
     "vorbisfile.dll",
@@ -85,19 +85,8 @@ $mixerDlls = @(
     "wavpackdll.dll"
 )
 
-# Copy SDL2 core DLLs
-if (Test-Path $sdl2Dll) {
-    Copy-Item $sdl2Dll $runtimeDir -Force
-    Write-Host "  Copied SDL2.dll" -ForegroundColor Green
-}
-
-if (Test-Path $sdl2TtfDll) {
-    Copy-Item $sdl2TtfDll $runtimeDir -Force
-    Write-Host "  Copied SDL2_ttf.dll" -ForegroundColor Green
-}
-
-# Copy SDL2_mixer and dependencies
-foreach ($dll in $mixerDlls) {
+# Copy all DLLs from vcpkg
+foreach ($dll in $requiredDlls) {
     $srcPath = Join-Path $vcpkgBinDir $dll
     if (Test-Path $srcPath) {
         Copy-Item $srcPath $runtimeDir -Force

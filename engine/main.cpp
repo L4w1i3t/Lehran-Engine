@@ -5,11 +5,17 @@
 
 #include <SDL.h>
 #include <SDL_ttf.h>
+#include <SDL_image.h>
 #include <SDL2/SDL_mixer.h>
 #include <iostream>
 #include <string>
 #include <fstream>
 #include "json.hpp"
+#include "SaveManager.hpp"
+#include "TextureManager.hpp"
+#include "SaveSlotScreen.hpp"
+#include "SceneManager.hpp"
+#include "DialogueSystem.hpp"
 
 using json = nlohmann::json;
 
@@ -21,6 +27,9 @@ const int SCREEN_HEIGHT = 600;
 enum GameState {
     STATE_SPLASH,
     STATE_TITLE,
+    STATE_SAVE_SELECT,
+    STATE_SCENE,
+    STATE_DIALOGUE,
     STATE_EASTER_EGG,
     STATE_QUIT
 };
@@ -38,14 +47,31 @@ private:
     float splashTimer;
     json gameData;
     json audioAssignments;
+    json gameFlow;
     std::string gameName;
     bool audioInitialized;
+    std::string currentSceneId;
+    
+    // Modular systems
+    Lehran::SaveManager* saveManager;
+    TextureManager* textureManager;
+    SaveSlotScreen* saveSlotScreen;
+    SceneManager* sceneManager;
+    DialogueSystem* dialogueSystem;
+    
+    // Game flow state
+    int currentSaveSlot;
+    SaveSlotScreen::Mode saveScreenMode;
     
 public:
     LehranEngine() : window(nullptr), renderer(nullptr), 
                      fontLarge(nullptr), fontMedium(nullptr), fontSmall(nullptr),
                      bgm(nullptr), currentState(STATE_SPLASH), selectedMenuItem(0), 
-                     splashTimer(0.0f), audioInitialized(false) {}
+                     splashTimer(0.0f), audioInitialized(false),
+                     saveManager(nullptr), textureManager(nullptr),
+                     saveSlotScreen(nullptr), sceneManager(nullptr),
+                     dialogueSystem(nullptr), currentSaveSlot(-1),
+                     saveScreenMode(SaveSlotScreen::Mode::NEW_GAME) {}
     
     bool Initialize() {
         // Initialize SDL
@@ -57,6 +83,13 @@ public:
         // Initialize SDL_ttf
         if (TTF_Init() == -1) {
             std::cerr << "SDL_ttf initialization failed: " << TTF_GetError() << std::endl;
+            return false;
+        }
+        
+        // Initialize SDL_image
+        int imgFlags = IMG_INIT_PNG | IMG_INIT_JPG;
+        if (!(IMG_Init(imgFlags) & imgFlags)) {
+            std::cerr << "SDL_image initialization failed: " << IMG_GetError() << std::endl;
             return false;
         }
         
@@ -110,7 +143,14 @@ public:
         // Load game data
         LoadGameData();
         
-        // Don't load title music yet - wait until we reach title screen
+        // Initialize modular systems
+        saveManager = new Lehran::SaveManager();
+        textureManager = new TextureManager(renderer);
+        saveSlotScreen = new SaveSlotScreen(renderer, fontLarge, fontMedium, fontSmall, saveManager);
+        sceneManager = new SceneManager(renderer, textureManager);
+        dialogueSystem = new DialogueSystem(renderer, fontMedium, fontSmall, textureManager);
+        
+        std::cout << "All systems initialized successfully" << std::endl;
         
         return true;
     }
@@ -132,11 +172,8 @@ public:
                 shouldPlayMusic = true;
             }
             // If assigned is empty, it means "(None)" was selected - don't play music
-        } else {
-            // No audio assignments file or no title_music entry - use default
-            musicPath = "assets/bgm/test.ogg";
-            shouldPlayMusic = true;
         }
+        // If no audio assignments file or no title_music entry - don't play music
         
         if (!shouldPlayMusic) {
             std::cout << "Title music set to (None) - running without music" << std::endl;
@@ -187,9 +224,179 @@ public:
             std::cerr << "Using default audio paths" << std::endl;
         }
         
+        // Load game flow configuration
+        try {
+            std::ifstream flowFile("data/game_flow.json");
+            if (flowFile.is_open()) {
+                flowFile >> gameFlow;
+                flowFile.close();
+                std::cout << "Game flow loaded successfully" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load game flow: " << e.what() << std::endl;
+        }
+        
         // Update window title with game name
         if (window) {
             SDL_SetWindowTitle(window, gameName.c_str());
+        }
+    }
+    
+    void StartGameFromSlot(int slotNumber) {
+        std::cout << "Starting game from slot " << slotNumber << std::endl;
+        
+        // Load or create save data
+        if (saveScreenMode == SaveSlotScreen::Mode::LOAD_GAME) {
+            Lehran::SaveData data;
+            if (saveManager->load(slotNumber, data)) {
+                std::cout << "Loaded save: " << data.slot_name << ", Chapter " << data.current_chapter << std::endl;
+                // TODO: Load actual game state from save data
+            }
+        } else {
+            // New game - create initial save data
+            Lehran::SaveData newSave;
+            newSave.version = 1;
+            newSave.slot_name = "New Game";
+            newSave.current_chapter = 0;
+            newSave.turn_count = 0;
+            newSave.gold = 0;
+            newSave.difficulty = 1;
+            newSave.permadeath_enabled = true;
+            newSave.casual_mode = false;
+            newSave.is_mid_battle = false;
+            newSave.timestamp = time(nullptr);
+            saveManager->save(newSave, slotNumber, true);
+            std::cout << "Created new save in slot " << slotNumber << std::endl;
+        }
+        
+        // Get starting scene from game_flow.json
+        if (gameFlow.contains("game_start") && gameFlow["game_start"].contains("new_game_scene")) {
+            currentSceneId = gameFlow["game_start"]["new_game_scene"];
+            LoadScene(currentSceneId);
+        } else {
+            std::cerr << "ERROR: No starting scene defined in game_flow.json!" << std::endl;
+            currentState = STATE_TITLE;
+        }
+    }
+    
+    void LoadScene(const std::string& sceneId) {
+        std::cout << "Loading scene: " << sceneId << std::endl;
+        
+        // Special case: return to title
+        if (sceneId == "return_to_title") {
+            EndScene();
+            return;
+        }
+        
+        // Load scene JSON file
+        std::string scenePath = "data/scenes/" + sceneId + ".json";
+        json sceneData;
+        
+        try {
+            std::ifstream sceneFile(scenePath);
+            if (!sceneFile.is_open()) {
+                std::cerr << "ERROR: Scene file not found: " << scenePath << std::endl;
+                currentState = STATE_TITLE;
+                return;
+            }
+            sceneFile >> sceneData;
+            sceneFile.close();
+        } catch (const std::exception& e) {
+            std::cerr << "ERROR: Failed to load scene: " << e.what() << std::endl;
+            currentState = STATE_TITLE;
+            return;
+        }
+        
+        // Transition to scene
+        currentState = STATE_SCENE;
+        sceneManager->StartTransition(SceneManager::TransitionType::FADE_FROM_BLACK, 1.0f);
+        
+        // Set background from scene data
+        if (sceneData.contains("background")) {
+            std::string bgPath = "assets/" + sceneData["background"].get<std::string>();
+            sceneManager->SetBackground(bgPath);
+        }
+        
+        // Load scene music
+        if (sceneData.contains("music")) {
+            LoadSceneMusic(sceneData["music"]);
+        }
+        
+        // Prepare dialogue
+        if (sceneData.contains("dialogue")) {
+            PrepareDialogueFromJSON(sceneData["dialogue"]);
+        }
+        
+        // Store next scene ID
+        if (sceneData.contains("next_scene")) {
+            currentSceneId = sceneData["next_scene"];
+        } else {
+            currentSceneId = "return_to_title";
+        }
+    }
+    
+    void LoadSceneMusic(const std::string& musicFile) {
+        if (!audioInitialized) {
+            return;
+        }
+        
+        // Stop current music if playing
+        if (bgm) {
+            Mix_FreeMusic(bgm);
+            bgm = nullptr;
+        }
+        
+        // Load scene music
+        std::string musicPath = "assets/" + musicFile;
+        
+        bgm = Mix_LoadMUS(musicPath.c_str());
+        if (!bgm) {
+            std::cerr << "Failed to load scene music: " << Mix_GetError() << std::endl;
+        } else {
+            std::cout << "Scene music loaded: " << musicPath << std::endl;
+            Mix_PlayMusic(bgm, -1);
+            Mix_VolumeMusic(MIX_MAX_VOLUME / 2);
+        }
+    }
+    
+    void PrepareDialogueFromJSON(const json& dialogueArray) {
+        std::vector<DialogueSystem::DialogueLine> dialogueLines;
+        
+        for (const auto& line : dialogueArray) {
+            DialogueSystem::DialogueLine dialogueLine;
+            dialogueLine.speakerName = line.value("speaker", "");
+            dialogueLine.text = line.value("text", "");
+            dialogueLine.portraitPath = line.value("portrait", "");
+            
+            // TODO: Handle save_prompt flag
+            
+            dialogueLines.push_back(dialogueLine);
+        }
+        
+        dialogueSystem->LoadDialogue(dialogueLines);
+        std::cout << "Loaded " << dialogueLines.size() << " dialogue lines from scene data" << std::endl;
+    }
+    
+    void StartDialogue() {
+        dialogueSystem->Start();
+        std::cout << "Started dialogue sequence" << std::endl;
+    }
+    
+    void EndScene() {
+        // Scene complete - check if there's a next scene or return to title
+        std::cout << "Scene complete" << std::endl;
+        
+        dialogueSystem->Stop();
+        sceneManager->ClearBackground();
+        
+        // Load next scene or return to title
+        if (!currentSceneId.empty() && currentSceneId != "return_to_title") {
+            LoadScene(currentSceneId);
+        } else {
+            std::cout << "Returning to title screen" << std::endl;
+            currentState = STATE_TITLE;
+            // Restart title music
+            LoadTitleMusic();
         }
     }
     
@@ -237,10 +444,54 @@ public:
                     selectedMenuItem = (selectedMenuItem + 1) % 3;
                 } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
                     if (selectedMenuItem == 0) {
-                        currentState = STATE_EASTER_EGG;
+                        // New Game - go to save slot selection
+                        saveScreenMode = SaveSlotScreen::Mode::NEW_GAME;
+                        saveSlotScreen->SetMode(saveScreenMode);
+                        saveSlotScreen->Reset();
+                        currentState = STATE_SAVE_SELECT;
+                    } else if (selectedMenuItem == 1) {
+                        // Load Game - go to save slot selection
+                        saveScreenMode = SaveSlotScreen::Mode::LOAD_GAME;
+                        saveSlotScreen->SetMode(saveScreenMode);
+                        saveSlotScreen->Reset();
+                        currentState = STATE_SAVE_SELECT;
                     } else if (selectedMenuItem == 2) {
                         currentState = STATE_QUIT;
                     }
+                }
+                break;
+                
+            case STATE_SAVE_SELECT:
+                saveSlotScreen->HandleInput(key);
+                
+                // Check if user selected a slot
+                if (saveSlotScreen->HasSelectedSlot()) {
+                    currentSaveSlot = saveSlotScreen->GetSelectedSlot();
+                    std::cout << "Selected save slot: " << currentSaveSlot << std::endl;
+                    
+                    // Transition to scene/gameplay
+                    StartGameFromSlot(currentSaveSlot);
+                }
+                
+                // Check if user wants to return to title
+                if (saveSlotScreen->ShouldReturnToTitle()) {
+                    currentState = STATE_TITLE;
+                }
+                break;
+                
+            case STATE_SCENE:
+                // Scene automatically transitions to dialogue
+                break;
+                
+            case STATE_DIALOGUE:
+                dialogueSystem->HandleInput(key);
+                
+                // Auto-save at the save prompt (line 5 in our dialogue)
+                // TODO: Make this more robust with proper dialogue IDs
+                
+                // Check if dialogue is complete
+                if (dialogueSystem->IsComplete()) {
+                    EndScene();
                 }
                 break;
                 
@@ -262,6 +513,16 @@ public:
                 // Start title music when entering title screen
                 LoadTitleMusic();
             }
+        } else if (currentState == STATE_SCENE) {
+            sceneManager->Update(deltaTime);
+            
+            // Check if transition is complete, then start dialogue
+            if (sceneManager->IsTransitionComplete() && !dialogueSystem->IsActive()) {
+                currentState = STATE_DIALOGUE;
+                StartDialogue();
+            }
+        } else if (currentState == STATE_DIALOGUE) {
+            dialogueSystem->Update(deltaTime);
         }
     }
     
@@ -272,6 +533,17 @@ public:
                 break;
             case STATE_TITLE:
                 RenderTitle();
+                break;
+            case STATE_SAVE_SELECT:
+                saveSlotScreen->Render();
+                break;
+            case STATE_SCENE:
+                sceneManager->RenderBackground();
+                sceneManager->RenderTransition();
+                break;
+            case STATE_DIALOGUE:
+                sceneManager->RenderBackground();
+                dialogueSystem->Render();
                 break;
             case STATE_EASTER_EGG:
                 RenderEasterEgg();
@@ -385,6 +657,13 @@ public:
     }
     
     void Cleanup() {
+        // Clean up modular systems
+        delete dialogueSystem;
+        delete sceneManager;
+        delete saveSlotScreen;
+        delete textureManager;
+        delete saveManager;
+        
         if (bgm) {
             Mix_FreeMusic(bgm);
             bgm = nullptr;
@@ -397,6 +676,7 @@ public:
         if (fontSmall) TTF_CloseFont(fontSmall);
         if (renderer) SDL_DestroyRenderer(renderer);
         if (window) SDL_DestroyWindow(window);
+        IMG_Quit();
         TTF_Quit();
         SDL_Quit();
     }

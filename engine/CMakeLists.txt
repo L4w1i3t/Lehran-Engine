@@ -25,6 +25,11 @@ set(SOURCES
     src/SaveSlotScreen.cpp
     src/SceneManager.cpp
     src/DialogueSystem.cpp
+    src/ConfigManager.cpp
+    src/RenderManager.cpp
+    src/GameStateManager.cpp
+    src/InputHandler.cpp
+    src/MapManager.cpp
 )
 
 # Create executable

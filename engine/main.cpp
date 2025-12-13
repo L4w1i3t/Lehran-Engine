@@ -16,23 +16,17 @@
 #include "SaveSlotScreen.hpp"
 #include "SceneManager.hpp"
 #include "DialogueSystem.hpp"
+#include "ConfigManager.hpp"
+#include "RenderManager.hpp"
+#include "GameStateManager.hpp"
+#include "InputHandler.hpp"
+#include "MapManager.hpp"
 
 using json = nlohmann::json;
 
 // Screen dimensions
-const int SCREEN_WIDTH = 800;
-const int SCREEN_HEIGHT = 600;
-
-// Game states
-enum GameState {
-    STATE_SPLASH,
-    STATE_TITLE,
-    STATE_SAVE_SELECT,
-    STATE_SCENE,
-    STATE_DIALOGUE,
-    STATE_EASTER_EGG,
-    STATE_QUIT
-};
+const int SCREEN_WIDTH = 1920;
+const int SCREEN_HEIGHT = 1080;
 
 class LehranEngine {
 private:
@@ -42,42 +36,56 @@ private:
     TTF_Font* fontMedium;
     TTF_Font* fontSmall;
     Mix_Music* bgm;
-    GameState currentState;
-    int selectedMenuItem;
-    float splashTimer;
+    std::string currentMusicPath;  // Track currently playing music
     json gameData;
     json audioAssignments;
     json gameFlow;
     std::string gameName;
     bool audioInitialized;
-    std::string currentSceneId;
     
     // Modular systems
+    Lehran::ConfigManager* configManager;
+    Lehran::RenderManager* renderManager;
+    Lehran::GameStateManager* stateManager;
+    Lehran::InputHandler* inputHandler;
     Lehran::SaveManager* saveManager;
     TextureManager* textureManager;
     SaveSlotScreen* saveSlotScreen;
     SceneManager* sceneManager;
     DialogueSystem* dialogueSystem;
-    
-    // Game flow state
-    int currentSaveSlot;
-    SaveSlotScreen::Mode saveScreenMode;
+    Lehran::MapManager* mapManager;
     
 public:
     LehranEngine() : window(nullptr), renderer(nullptr), 
                      fontLarge(nullptr), fontMedium(nullptr), fontSmall(nullptr),
-                     bgm(nullptr), currentState(STATE_SPLASH), selectedMenuItem(0), 
-                     splashTimer(0.0f), audioInitialized(false),
-                     saveManager(nullptr), textureManager(nullptr),
+                     bgm(nullptr), currentMusicPath(""), audioInitialized(false),
+                     configManager(nullptr), renderManager(nullptr), stateManager(nullptr),
+                     inputHandler(nullptr), saveManager(nullptr), textureManager(nullptr),
                      saveSlotScreen(nullptr), sceneManager(nullptr),
-                     dialogueSystem(nullptr), currentSaveSlot(-1),
-                     saveScreenMode(SaveSlotScreen::Mode::NEW_GAME) {}
+                     dialogueSystem(nullptr), mapManager(nullptr) {}
     
     bool Initialize() {
+        // Create modular systems first
+        configManager = new Lehran::ConfigManager();
+        stateManager = new Lehran::GameStateManager();
+        inputHandler = new Lehran::InputHandler();
+        
+        // Load engine settings
+        configManager->LoadEngineSettings();
+        
         // Initialize SDL
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
             std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
             return false;
+        }
+        
+        // Detect native display resolution
+        SDL_DisplayMode displayMode;
+        if (SDL_GetCurrentDisplayMode(0, &displayMode) == 0) {
+            configManager->SetNativeDisplaySize(displayMode.w, displayMode.h);
+            std::cout << "Detected native display: " << displayMode.w << "x" << displayMode.h << std::endl;
+        } else {
+            std::cerr << "Failed to detect display mode, using defaults" << std::endl;
         }
         
         // Initialize SDL_ttf
@@ -104,11 +112,30 @@ public:
         }
         
         // Create window
+        Uint32 windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+        
+        int createWidth = configManager->GetWindowWidth();
+        int createHeight = configManager->GetWindowHeight();
+        Lehran::WindowMode windowMode = configManager->GetWindowMode();
+        
+        if (windowMode == Lehran::WindowMode::BORDERLESS) {
+            windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+        } else if (windowMode == Lehran::WindowMode::FULLSCREEN) {
+            windowFlags |= SDL_WINDOW_FULLSCREEN;
+            createWidth = configManager->GetNativeDisplayWidth();
+            createHeight = configManager->GetNativeDisplayHeight();
+        }
+        
         window = SDL_CreateWindow("Lehran Engine",
                                   SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED,
-                                  SCREEN_WIDTH, SCREEN_HEIGHT,
-                                  SDL_WINDOW_SHOWN);
+                                  createWidth, createHeight,
+                                  windowFlags);
+        
+        const char* modeStr = (windowMode == Lehran::WindowMode::WINDOWED) ? "Windowed" : 
+                              (windowMode == Lehran::WindowMode::BORDERLESS) ? "Borderless" : "Fullscreen";
+        std::cout << "Window created: " << createWidth << "x" << createHeight 
+                  << " (" << modeStr << ")" << std::endl;
         
         if (!window) {
             std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
@@ -122,14 +149,18 @@ public:
             return false;
         }
         
-        // Load fonts (using default system font for now)
+        // Set logical size for proper scaling
+        SDL_RenderSetLogicalSize(renderer, SCREEN_WIDTH, SCREEN_HEIGHT);
+        SDL_RenderSetIntegerScale(renderer, SDL_FALSE);
+        std::cout << "Render logical size set to: " << SCREEN_WIDTH << "x" << SCREEN_HEIGHT << std::endl;
+        
+        // Load fonts
         fontLarge = TTF_OpenFont("C:\\Windows\\Fonts\\arial.ttf", 48);
         fontMedium = TTF_OpenFont("C:\\Windows\\Fonts\\arial.ttf", 32);
         fontSmall = TTF_OpenFont("C:\\Windows\\Fonts\\arial.ttf", 20);
         
         if (!fontLarge || !fontMedium || !fontSmall) {
             std::cerr << "Font loading failed: " << TTF_GetError() << std::endl;
-            // Try alternate font
             fontLarge = TTF_OpenFont("C:\\Windows\\Fonts\\segoeui.ttf", 48);
             fontMedium = TTF_OpenFont("C:\\Windows\\Fonts\\segoeui.ttf", 32);
             fontSmall = TTF_OpenFont("C:\\Windows\\Fonts\\segoeui.ttf", 20);
@@ -140,59 +171,283 @@ public:
             }
         }
         
+        // Initialize render manager
+        renderManager = new Lehran::RenderManager(renderer, fontLarge, fontMedium, fontSmall);
+        
+        // Initialize game systems
+        saveManager = new Lehran::SaveManager();
+        textureManager = new TextureManager(renderer);
+        
         // Load game data
         LoadGameData();
         
-        // Initialize modular systems
-        saveManager = new Lehran::SaveManager();
-        textureManager = new TextureManager(renderer);
+        // Initialize remaining systems
         saveSlotScreen = new SaveSlotScreen(renderer, fontLarge, fontMedium, fontSmall, saveManager);
         sceneManager = new SceneManager(renderer, textureManager);
         dialogueSystem = new DialogueSystem(renderer, fontMedium, fontSmall, textureManager);
+        mapManager = new Lehran::MapManager(renderer, textureManager, configManager, fontMedium);
+        
+        // Setup input handler callbacks
+        SetupInputCallbacks();
+        
+        // Setup state manager callbacks
+        SetupStateCallbacks();
         
         std::cout << "All systems initialized successfully" << std::endl;
         
         return true;
     }
     
-    void LoadTitleMusic() {
-        if (!audioInitialized) {
-            return; // Audio not available, skip silently
-        }
+    void SetupInputCallbacks() {
+        inputHandler->SetSaveSlotScreen(saveSlotScreen);
+        inputHandler->SetDialogueSystemHandleInput([this](SDL_Keycode key) {
+            dialogueSystem->HandleInput(key);
+        });
+        inputHandler->SetDialogueCompleteCheck([this]() {
+            return dialogueSystem->IsComplete();
+        });
+        inputHandler->SetSaveSlotSelectedCheck([this]() {
+            return saveSlotScreen->HasSelectedSlot();
+        });
+        inputHandler->SetSaveSlotReturnCheck([this]() {
+            return saveSlotScreen->ShouldReturnToTitle();
+        });
+        inputHandler->SetGetSelectedSlot([this]() {
+            return saveSlotScreen->GetSelectedSlot();
+        });
+        inputHandler->SetGetSaveScreenMode([this]() {
+            return stateManager->GetSaveScreenMode();
+        });
+        inputHandler->SetGetSelectedSettingsItem([this]() {
+            return stateManager->GetSelectedSettingsItem();
+        });
+        inputHandler->SetGetSelectedMenuItem([this]() {
+            return stateManager->GetSelectedMenuItem();
+        });
         
-        // Check if we have an assigned title music in audio_assignments.json
+        // State change callback
+        inputHandler->SetStateChangeCallback([this](Lehran::GameState newState) {
+            if (newState == Lehran::GameState::STATE_SCENE) {
+                // Dialogue complete - end scene
+                stateManager->EndScene(sceneManager, dialogueSystem);
+            } else {
+                // Check if returning to title screen - reload title music
+                if (newState == Lehran::GameState::STATE_TITLE && 
+                    stateManager->GetCurrentState() != Lehran::GameState::STATE_TITLE) {
+                    LoadTitleMusic();
+                }
+                stateManager->SetCurrentState(newState);
+            }
+        });
+        
+        // Title menu callback
+        inputHandler->SetTitleMenuCallback([this](int action) {
+            if (action >= 0) {
+                // Just navigation
+                stateManager->SetSelectedMenuItem(action);
+            } else if (action <= -100) {
+                // Game start signal
+                int slotNumber = -(action + 1000);
+                stateManager->StartGameFromSlot(slotNumber, saveManager, gameFlow);
+                if (!stateManager->GetCurrentSceneId().empty()) {
+                    stateManager->LoadScene(stateManager->GetCurrentSceneId(), sceneManager, dialogueSystem);
+                }
+            } else {
+                // Menu selection
+                int selected = -(action + 1);
+                HandleTitleSelection(selected);
+            }
+        });
+        
+        // Settings action callback
+        inputHandler->SetSettingsActionCallback([this](int item, bool isLeft) {
+            if (item < -199) {
+                // Adjustment action (LEFT/RIGHT pressed)
+                int actualItem = -(item + 200);
+                HandleSettingsAdjustment(actualItem, isLeft);
+            } else if (item < -99) {
+                // Selection action (RETURN/SPACE pressed)
+                int actualItem = -(item + 100);
+                HandleSettingsSelection(actualItem);
+            } else {
+                // Navigation only (UP/DOWN pressed)
+                stateManager->SetSelectedSettingsItem(item);
+                
+                // Auto-scroll to keep selected item in comfortable viewing zone
+                // All coordinates relative to the logical 1920x1080 resolution
+                float itemSpacing = 100.0f;
+                float itemYPos = 350.0f + (item * itemSpacing); // Position without scroll
+                float currentScroll = static_cast<float>(stateManager->GetSettingsScrollOffset());
+                
+                // Use thresholds slightly above/below center (relative to 1080p)
+                float screenCenterY = SCREEN_HEIGHT / 2.0f; // 540
+                float scrollThresholdUp = screenCenterY - 60.0f;    // ~480 - a bit above center
+                float scrollThresholdDown = screenCenterY + 60.0f;  // ~600 - a bit below center
+                
+                // Calculate item's screen position with current scroll
+                float screenY = itemYPos - currentScroll;
+                
+                // Adjust scroll if item crosses thresholds
+                if (screenY < scrollThresholdUp) {
+                    // Item is above threshold - scroll up to recenter
+                    float newScroll = itemYPos - scrollThresholdUp;
+                    stateManager->SetSettingsScrollOffset(static_cast<int>(newScroll));
+                } else if (screenY > scrollThresholdDown) {
+                    // Item is below threshold - scroll down to recenter
+                    float newScroll = itemYPos - scrollThresholdDown;
+                    stateManager->SetSettingsScrollOffset(static_cast<int>(newScroll));
+                }
+                
+                // Clamp scroll to valid range (0 to maxScroll)
+                // 9 items * 100px spacing = 900px total height
+                // Visible area is roughly 650px, so max scroll = 900 - 650 = 250
+                // But existing system uses 600 as max, so keep that
+                int finalScroll = stateManager->GetSettingsScrollOffset();
+                if (finalScroll < 0) stateManager->SetSettingsScrollOffset(0);
+                if (finalScroll > 600) stateManager->SetSettingsScrollOffset(600);
+            }
+        });
+        
+        // Scroll callback
+        inputHandler->SetScrollCallback([this](int wheelY) {
+            stateManager->AdjustSettingsScrollOffset(wheelY);
+        });
+        
+        // Window mode callback
+        inputHandler->SetWindowModeCallback([this]() {
+            CycleWindowMode();
+        });
+        
+        // Map cursor callback
+        inputHandler->SetMapCursorMoveCallback([this](int dx, int dy) {
+            mapManager->MoveCursor(dx, dy);
+        });
+        
+        inputHandler->SetMapSelectCallback([this]() {
+            if (mapManager->HasSelectedUnit()) {
+                // Unit already selected - try to confirm move
+                mapManager->ConfirmMove();
+            } else {
+                // No unit selected - try to select one
+                mapManager->SelectUnit();
+            }
+        });
+        
+        inputHandler->SetMapCancelCallback([this]() -> bool {
+            if (mapManager->HasSelectedUnit()) {
+                mapManager->CancelSelection();
+                return true;  // Cancelled something
+            }
+            return false;  // Nothing to cancel
+        });
+        
+        inputHandler->SetMapActionMenuCallback([this](int action) -> int {
+            if (action == -1000) {
+                // Query: is menu showing?
+                return mapManager->IsShowingActionMenu() ? 1 : 0;
+            } else if (action == -1 || action == 1) {
+                // Navigation
+                mapManager->MoveActionSelection(action);
+                return 0;
+            } else if (action == 100) {
+                // Confirm
+                mapManager->ConfirmAction();
+                return 0;
+            } else if (action == -100) {
+                // Cancel action menu - restore unit position and return to movement selection
+                mapManager->CancelActionMenu();
+                return 0;
+            }
+            return 0;
+        });
+        
+        inputHandler->SetMapInventoryCallback([this](int action) -> int {
+            if (action == -2000) {
+                // Query: is inventory showing?
+                return mapManager->IsShowingInventory() ? 1 : 0;
+            } else if (action == -1 || action == 1) {
+                // Navigation (only if not in drop confirmation)
+                if (!mapManager->IsShowingDropConfirmation()) {
+                    mapManager->MoveInventorySelection(action);
+                }
+                return 0;
+            } else if (action == 100) {
+                // Confirm - equip/drop item or confirm drop
+                mapManager->ConfirmInventoryAction();
+                return 0;
+            } else if (action == -100) {
+                // Cancel - close inventory or cancel drop confirmation
+                if (mapManager->IsShowingDropConfirmation()) {
+                    mapManager->CancelDropConfirmation();
+                } else {
+                    mapManager->CloseInventory();
+                }
+                return 0;
+            }
+            return 0;
+        });
+        
+        inputHandler->SetMapToggleUnitInfoCallback([this]() {
+            mapManager->ToggleUnitInfo();
+        });
+    }
+    
+    void SetupStateCallbacks() {
+        stateManager->SetLoadTitleMusicCallback([this]() {
+            LoadTitleMusic();
+        });
+        stateManager->SetLoadSceneMusicCallback([this](const std::string& musicFile) {
+            LoadSceneMusic(musicFile);
+        });
+        stateManager->SetStartDialogueCallback([this]() {
+            dialogueSystem->Start();
+        });
+    }
+    
+    void LoadTitleMusic() {
+        if (!audioInitialized) return;
+        
         std::string musicPath = "";
         bool shouldPlayMusic = false;
         
         if (audioAssignments.contains("title_music")) {
-            // Audio assignments file exists and has title_music entry
             std::string assigned = audioAssignments["title_music"];
             if (!assigned.empty()) {
                 musicPath = "assets/" + assigned;
                 shouldPlayMusic = true;
             }
-            // If assigned is empty, it means "(None)" was selected - don't play music
         }
-        // If no audio assignments file or no title_music entry - don't play music
         
         if (!shouldPlayMusic) {
             std::cout << "Title music set to (None) - running without music" << std::endl;
+            currentMusicPath = "";
             return;
+        }
+        
+        // Check if this music is already playing
+        if (currentMusicPath == musicPath && Mix_PlayingMusic()) {
+            std::cout << "Title music already playing, not restarting" << std::endl;
+            return;
+        }
+        
+        if (bgm) {
+            Mix_FreeMusic(bgm);
+            bgm = nullptr;
         }
         
         bgm = Mix_LoadMUS(musicPath.c_str());
         
         if (!bgm) {
             std::cerr << "Failed to load music: " << Mix_GetError() << std::endl;
-            std::cerr << "Game will run without title music" << std::endl;
+            currentMusicPath = "";
         } else {
             std::cout << "Title music loaded successfully from: " << musicPath << std::endl;
-            // Play music on loop (-1 = infinite loop)
             if (Mix_PlayMusic(bgm, -1) == -1) {
                 std::cerr << "Failed to play music: " << Mix_GetError() << std::endl;
+                currentMusicPath = "";
             } else {
-                // Set volume to 50%
-                Mix_VolumeMusic(MIX_MAX_VOLUME / 2);
+                configManager->ApplyAudioVolumes(audioInitialized);
+                currentMusicPath = musicPath;
             }
         }
     }
@@ -204,6 +459,14 @@ public:
                 file >> gameData;
                 gameName = gameData.value("name", "Untitled Game");
                 file.close();
+                
+                if (saveManager) {
+                    std::string saveSubdir = gameData.value("save_directory", "");
+                    if (saveSubdir.empty()) {
+                        saveSubdir = gameName;
+                    }
+                    saveManager->set_project_subdirectory(saveSubdir);
+                }
             } else {
                 gameName = "Untitled Game";
             }
@@ -211,7 +474,6 @@ public:
             gameName = "Untitled Game";
         }
         
-        // Load audio assignments
         try {
             std::ifstream audioFile("data/audio_assignments.json");
             if (audioFile.is_open()) {
@@ -221,10 +483,8 @@ public:
             }
         } catch (const std::exception& e) {
             std::cerr << "Failed to load audio assignments: " << e.what() << std::endl;
-            std::cerr << "Using default audio paths" << std::endl;
         }
         
-        // Load game flow configuration
         try {
             std::ifstream flowFile("data/game_flow.json");
             if (flowFile.is_open()) {
@@ -236,168 +496,146 @@ public:
             std::cerr << "Failed to load game flow: " << e.what() << std::endl;
         }
         
-        // Update window title with game name
         if (window) {
             SDL_SetWindowTitle(window, gameName.c_str());
         }
     }
     
-    void StartGameFromSlot(int slotNumber) {
-        std::cout << "Starting game from slot " << slotNumber << std::endl;
-        
-        // Load or create save data
-        if (saveScreenMode == SaveSlotScreen::Mode::LOAD_GAME) {
-            Lehran::SaveData data;
-            if (saveManager->load(slotNumber, data)) {
-                std::cout << "Loaded save: " << data.slot_name << ", Chapter " << data.current_chapter << std::endl;
-                // TODO: Load actual game state from save data
+    void HandleTitleSelection(int selected) {
+        if (selected == 0) {
+            // New Game
+            stateManager->SetSaveScreenMode(static_cast<int>(SaveSlotScreen::Mode::NEW_GAME));
+            saveSlotScreen->SetMode(SaveSlotScreen::Mode::NEW_GAME);
+            saveSlotScreen->Reset();
+            stateManager->SetCurrentState(Lehran::GameState::STATE_SAVE_SELECT);
+        } else if (selected == 1) {
+            // Load Game
+            stateManager->SetSaveScreenMode(static_cast<int>(SaveSlotScreen::Mode::LOAD_GAME));
+            saveSlotScreen->SetMode(SaveSlotScreen::Mode::LOAD_GAME);
+            saveSlotScreen->Reset();
+            stateManager->SetCurrentState(Lehran::GameState::STATE_SAVE_SELECT);
+        } else if (selected == 2) {
+            // Settings
+            stateManager->SetSelectedSettingsItem(0);
+            stateManager->SetSettingsScrollOffset(0);
+            stateManager->SetCurrentState(Lehran::GameState::STATE_SETTINGS);
+        } else if (selected == 3) {
+            // Map Test
+            mapManager->LoadMap("maps/Battle/test_map.json");
+            
+            // Load map music if specified
+            std::string mapMusic = mapManager->GetMapMusic();
+            if (!mapMusic.empty()) {
+                if (bgm) {
+                    Mix_FreeMusic(bgm);
+                    bgm = nullptr;
+                }
+                bgm = Mix_LoadMUS(mapMusic.c_str());
+                if (bgm) {
+                    Mix_PlayMusic(bgm, -1);
+                    currentMusicPath = mapMusic;
+                    std::cout << "Playing map music: " << mapMusic << std::endl;
+                } else {
+                    std::cerr << "Failed to load map music: " << mapMusic << std::endl;
+                    currentMusicPath = "";
+                }
             }
-        } else {
-            // New game - create initial save data
-            Lehran::SaveData newSave;
-            newSave.version = 1;
-            newSave.slot_name = "New Game";
-            newSave.current_chapter = 0;
-            newSave.turn_count = 0;
-            newSave.gold = 0;
-            newSave.difficulty = 1;
-            newSave.permadeath_enabled = true;
-            newSave.casual_mode = false;
-            newSave.is_mid_battle = false;
-            newSave.timestamp = time(nullptr);
-            saveManager->save(newSave, slotNumber, true);
-            std::cout << "Created new save in slot " << slotNumber << std::endl;
-        }
-        
-        // Get starting scene from game_flow.json
-        if (gameFlow.contains("game_start") && gameFlow["game_start"].contains("new_game_scene")) {
-            currentSceneId = gameFlow["game_start"]["new_game_scene"];
-            LoadScene(currentSceneId);
-        } else {
-            std::cerr << "ERROR: No starting scene defined in game_flow.json!" << std::endl;
-            currentState = STATE_TITLE;
+            
+            stateManager->SetCurrentState(Lehran::GameState::STATE_MAP);
+        } else if (selected == 4) {
+            // VN Scene Test
+            stateManager->LoadScene("vn_test", sceneManager, dialogueSystem);
+        } else if (selected == 5) {
+            stateManager->SetCurrentState(Lehran::GameState::STATE_QUIT);
         }
     }
     
-    void LoadScene(const std::string& sceneId) {
-        std::cout << "Loading scene: " << sceneId << std::endl;
-        
-        // Special case: return to title
-        if (sceneId == "return_to_title") {
-            EndScene();
-            return;
+    void HandleSettingsSelection(int item) {
+        if (item == 0) {
+            // Cycle window mode forward
+            CycleWindowModeForward();
+        } else if (item == 6) {
+            // Copy Data
+            stateManager->SetSaveScreenMode(static_cast<int>(SaveSlotScreen::Mode::COPY_DATA));
+            saveSlotScreen->SetMode(SaveSlotScreen::Mode::COPY_DATA);
+            saveSlotScreen->Reset();
+            stateManager->SetCurrentState(Lehran::GameState::STATE_SAVE_SELECT);
+        } else if (item == 7) {
+            // Delete Data
+            stateManager->SetSaveScreenMode(static_cast<int>(SaveSlotScreen::Mode::DELETE_DATA));
+            saveSlotScreen->SetMode(SaveSlotScreen::Mode::DELETE_DATA);
+            saveSlotScreen->Reset();
+            stateManager->SetCurrentState(Lehran::GameState::STATE_SAVE_SELECT);
+        } else if (item == 8) {
+            // Back to title
+            configManager->SaveEngineSettings();
+            stateManager->SetCurrentState(Lehran::GameState::STATE_TITLE);
         }
-        
-        // Load scene JSON file
-        std::string scenePath = "data/scenes/" + sceneId + ".json";
-        json sceneData;
-        
-        try {
-            std::ifstream sceneFile(scenePath);
-            if (!sceneFile.is_open()) {
-                std::cerr << "ERROR: Scene file not found: " << scenePath << std::endl;
-                currentState = STATE_TITLE;
-                return;
+    }
+    
+    void HandleSettingsAdjustment(int item, bool isLeft) {
+        if (item == 0) {
+            // Window mode
+            if (isLeft) {
+                CycleWindowModeBackward();
+            } else {
+                CycleWindowModeForward();
             }
-            sceneFile >> sceneData;
-            sceneFile.close();
-        } catch (const std::exception& e) {
-            std::cerr << "ERROR: Failed to load scene: " << e.what() << std::endl;
-            currentState = STATE_TITLE;
-            return;
-        }
-        
-        // Transition to scene
-        currentState = STATE_SCENE;
-        sceneManager->StartTransition(SceneManager::TransitionType::FADE_FROM_BLACK, 1.0f);
-        
-        // Set background from scene data
-        if (sceneData.contains("background")) {
-            std::string bgPath = "assets/" + sceneData["background"].get<std::string>();
-            sceneManager->SetBackground(bgPath);
-        }
-        
-        // Load scene music
-        if (sceneData.contains("music")) {
-            LoadSceneMusic(sceneData["music"]);
-        }
-        
-        // Prepare dialogue
-        if (sceneData.contains("dialogue")) {
-            PrepareDialogueFromJSON(sceneData["dialogue"]);
-        }
-        
-        // Store next scene ID
-        if (sceneData.contains("next_scene")) {
-            currentSceneId = sceneData["next_scene"];
-        } else {
-            currentSceneId = "return_to_title";
+        } else if (item == 1 && configManager->GetWindowMode() == Lehran::WindowMode::WINDOWED) {
+            // Resolution
+            if (isLeft) {
+                configManager->CycleResolutionBackward();
+            } else {
+                configManager->CycleResolutionForward();
+            }
+            ApplyResolution();
+        } else if (item >= 2 && item <= 5) {
+            // Audio volumes
+            int delta = isLeft ? -5 : 5;
+            if (item == 2) {
+                configManager->SetMasterVolume(configManager->GetMasterVolume() + delta);
+                configManager->ApplyAudioVolumes(audioInitialized);
+            } else if (item == 3) {
+                configManager->SetMusicVolume(configManager->GetMusicVolume() + delta);
+                configManager->ApplyAudioVolumes(audioInitialized);
+            } else if (item == 4) {
+                configManager->SetSFXVolume(configManager->GetSFXVolume() + delta);
+                configManager->ApplyAudioVolumes(audioInitialized);
+            } else if (item == 5) {
+                configManager->SetVoiceVolume(configManager->GetVoiceVolume() + delta);
+                configManager->ApplyAudioVolumes(audioInitialized);
+            }
         }
     }
     
     void LoadSceneMusic(const std::string& musicFile) {
-        if (!audioInitialized) {
-            return;
-        }
+        if (!audioInitialized) return;
         
-        // Stop current music if playing
         if (bgm) {
             Mix_FreeMusic(bgm);
             bgm = nullptr;
         }
         
-        // Load scene music
         std::string musicPath = "assets/" + musicFile;
-        
         bgm = Mix_LoadMUS(musicPath.c_str());
+        
         if (!bgm) {
             std::cerr << "Failed to load scene music: " << Mix_GetError() << std::endl;
+            currentMusicPath = "";
         } else {
             std::cout << "Scene music loaded: " << musicPath << std::endl;
-            Mix_PlayMusic(bgm, -1);
-            Mix_VolumeMusic(MIX_MAX_VOLUME / 2);
+            if (Mix_PlayMusic(bgm, -1) == -1) {
+                std::cerr << "Failed to play scene music: " << Mix_GetError() << std::endl;
+                currentMusicPath = "";
+            } else {
+                configManager->ApplyAudioVolumes(audioInitialized);
+                currentMusicPath = musicPath;
+            }
         }
     }
     
-    void PrepareDialogueFromJSON(const json& dialogueArray) {
-        std::vector<DialogueSystem::DialogueLine> dialogueLines;
-        
-        for (const auto& line : dialogueArray) {
-            DialogueSystem::DialogueLine dialogueLine;
-            dialogueLine.speakerName = line.value("speaker", "");
-            dialogueLine.text = line.value("text", "");
-            dialogueLine.portraitPath = line.value("portrait", "");
-            
-            // TODO: Handle save_prompt flag
-            
-            dialogueLines.push_back(dialogueLine);
-        }
-        
-        dialogueSystem->LoadDialogue(dialogueLines);
-        std::cout << "Loaded " << dialogueLines.size() << " dialogue lines from scene data" << std::endl;
-    }
-    
-    void StartDialogue() {
-        dialogueSystem->Start();
-        std::cout << "Started dialogue sequence" << std::endl;
-    }
-    
-    void EndScene() {
-        // Scene complete - check if there's a next scene or return to title
-        std::cout << "Scene complete" << std::endl;
-        
-        dialogueSystem->Stop();
-        sceneManager->ClearBackground();
-        
-        // Load next scene or return to title
-        if (!currentSceneId.empty() && currentSceneId != "return_to_title") {
-            LoadScene(currentSceneId);
-        } else {
-            std::cout << "Returning to title screen" << std::endl;
-            currentState = STATE_TITLE;
-            // Restart title music
-            LoadTitleMusic();
-        }
+    void CycleWindowMode() {
+        CycleWindowModeForward();
     }
     
     void Run() {
@@ -405,8 +643,7 @@ public:
         SDL_Event event;
         Uint32 lastTime = SDL_GetTicks();
         
-        while (running && currentState != STATE_QUIT) {
-            // Calculate delta time
+        while (running && stateManager->GetCurrentState() != Lehran::GameState::STATE_QUIT) {
             Uint32 currentTime = SDL_GetTicks();
             float deltaTime = (currentTime - lastTime) / 1000.0f;
             lastTime = currentTime;
@@ -416,14 +653,14 @@ public:
                 if (event.type == SDL_QUIT) {
                     running = false;
                 } else if (event.type == SDL_KEYDOWN) {
-                    HandleInput(event.key.keysym.sym);
+                    inputHandler->HandleKeyDown(event.key.keysym.sym, stateManager->GetCurrentState());
+                } else if (event.type == SDL_MOUSEWHEEL) {
+                    inputHandler->HandleMouseWheel(event.wheel.y, stateManager->GetCurrentState());
                 }
             }
             
-            // Update
             Update(deltaTime);
             
-            // Render
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderClear(renderer);
             Render();
@@ -431,238 +668,122 @@ public:
         }
     }
     
-    void HandleInput(SDL_Keycode key) {
-        switch (currentState) {
-            case STATE_SPLASH:
-                // Splash screen auto-transitions, no input needed
-                break;
-                
-            case STATE_TITLE:
-                if (key == SDLK_UP) {
-                    selectedMenuItem = (selectedMenuItem - 1 + 3) % 3;
-                } else if (key == SDLK_DOWN) {
-                    selectedMenuItem = (selectedMenuItem + 1) % 3;
-                } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
-                    if (selectedMenuItem == 0) {
-                        // New Game - go to save slot selection
-                        saveScreenMode = SaveSlotScreen::Mode::NEW_GAME;
-                        saveSlotScreen->SetMode(saveScreenMode);
-                        saveSlotScreen->Reset();
-                        currentState = STATE_SAVE_SELECT;
-                    } else if (selectedMenuItem == 1) {
-                        // Load Game - go to save slot selection
-                        saveScreenMode = SaveSlotScreen::Mode::LOAD_GAME;
-                        saveSlotScreen->SetMode(saveScreenMode);
-                        saveSlotScreen->Reset();
-                        currentState = STATE_SAVE_SELECT;
-                    } else if (selectedMenuItem == 2) {
-                        currentState = STATE_QUIT;
-                    }
-                }
-                break;
-                
-            case STATE_SAVE_SELECT:
-                saveSlotScreen->HandleInput(key);
-                
-                // Check if user selected a slot
-                if (saveSlotScreen->HasSelectedSlot()) {
-                    currentSaveSlot = saveSlotScreen->GetSelectedSlot();
-                    std::cout << "Selected save slot: " << currentSaveSlot << std::endl;
-                    
-                    // Transition to scene/gameplay
-                    StartGameFromSlot(currentSaveSlot);
-                }
-                
-                // Check if user wants to return to title
-                if (saveSlotScreen->ShouldReturnToTitle()) {
-                    currentState = STATE_TITLE;
-                }
-                break;
-                
-            case STATE_SCENE:
-                // Scene automatically transitions to dialogue
-                break;
-                
-            case STATE_DIALOGUE:
-                dialogueSystem->HandleInput(key);
-                
-                // Auto-save at the save prompt (line 5 in our dialogue)
-                // TODO: Make this more robust with proper dialogue IDs
-                
-                // Check if dialogue is complete
-                if (dialogueSystem->IsComplete()) {
-                    EndScene();
-                }
-                break;
-                
-            case STATE_EASTER_EGG:
-                // Any key returns to title
-                currentState = STATE_TITLE;
-                break;
-                
-            default:
-                break;
+    void CycleWindowModeForward() {
+        int currentMode = static_cast<int>(configManager->GetWindowMode());
+        configManager->SetWindowMode(static_cast<Lehran::WindowMode>((currentMode + 1) % 3));
+        ApplyWindowMode();
+    }
+    
+    void CycleWindowModeBackward() {
+        int currentMode = static_cast<int>(configManager->GetWindowMode());
+        configManager->SetWindowMode(static_cast<Lehran::WindowMode>((currentMode + 2) % 3));
+        ApplyWindowMode();
+    }
+    
+    void ApplyWindowMode() {
+        SDL_SetWindowFullscreen(window, 0);
+        
+        Lehran::WindowMode windowMode = configManager->GetWindowMode();
+        if (windowMode == Lehran::WindowMode::WINDOWED) {
+            SDL_SetWindowSize(window, configManager->GetWindowWidth(), configManager->GetWindowHeight());
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            std::cout << "Switched to windowed mode (" << configManager->GetWindowWidth() 
+                      << "x" << configManager->GetWindowHeight() << ")" << std::endl;
+        } else if (windowMode == Lehran::WindowMode::BORDERLESS) {
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            std::cout << "Switched to borderless fullscreen" << std::endl;
+        } else if (windowMode == Lehran::WindowMode::FULLSCREEN) {
+            SDL_DisplayMode displayMode;
+            if (SDL_GetCurrentDisplayMode(0, &displayMode) == 0) {
+                SDL_SetWindowDisplayMode(window, &displayMode);
+            }
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+            std::cout << "Switched to fullscreen (" << configManager->GetNativeDisplayWidth() 
+                      << "x" << configManager->GetNativeDisplayHeight() << ")" << std::endl;
         }
+        
+        configManager->SaveEngineSettings();
+    }
+    
+    void ApplyResolution() {
+        if (configManager->GetWindowMode() != Lehran::WindowMode::WINDOWED) return;
+        
+        SDL_SetWindowSize(window, configManager->GetWindowWidth(), configManager->GetWindowHeight());
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        configManager->SaveEngineSettings();
+        
+        std::cout << "Resolution changed to: " << configManager->GetWindowWidth() 
+                  << "x" << configManager->GetWindowHeight() << std::endl;
     }
     
     void Update(float deltaTime) {
-        if (currentState == STATE_SPLASH) {
-            splashTimer += deltaTime;
-            if (splashTimer >= 3.5f) {  // Total duration: 3.5 seconds (fade in + stay + fade out)
-                currentState = STATE_TITLE;
-                // Start title music when entering title screen
+        Lehran::GameState currentState = stateManager->GetCurrentState();
+        
+        if (currentState == Lehran::GameState::STATE_SPLASH) {
+            stateManager->UpdateSplashTimer(deltaTime);
+            if (stateManager->ShouldTransitionFromSplash()) {
+                stateManager->SetCurrentState(Lehran::GameState::STATE_TITLE);
                 LoadTitleMusic();
             }
-        } else if (currentState == STATE_SCENE) {
+        } else if (currentState == Lehran::GameState::STATE_SCENE) {
             sceneManager->Update(deltaTime);
             
-            // Check if transition is complete, then start dialogue
             if (sceneManager->IsTransitionComplete() && !dialogueSystem->IsActive()) {
-                currentState = STATE_DIALOGUE;
-                StartDialogue();
+                stateManager->SetCurrentState(Lehran::GameState::STATE_DIALOGUE);
+                dialogueSystem->Start();
             }
-        } else if (currentState == STATE_DIALOGUE) {
+        } else if (currentState == Lehran::GameState::STATE_DIALOGUE) {
             dialogueSystem->Update(deltaTime);
         }
     }
     
     void Render() {
+        Lehran::GameState currentState = stateManager->GetCurrentState();
+        
         switch (currentState) {
-            case STATE_SPLASH:
-                RenderSplash();
+            case Lehran::GameState::STATE_SPLASH:
+                renderManager->RenderSplash(stateManager->GetSplashTimer());
                 break;
-            case STATE_TITLE:
-                RenderTitle();
+            case Lehran::GameState::STATE_TITLE:
+                renderManager->RenderTitle(gameName, stateManager->GetSelectedMenuItem(), gameData);
                 break;
-            case STATE_SAVE_SELECT:
+            case Lehran::GameState::STATE_SAVE_SELECT:
                 saveSlotScreen->Render();
                 break;
-            case STATE_SCENE:
+            case Lehran::GameState::STATE_SETTINGS:
+                renderManager->RenderSettings(*configManager, stateManager->GetSelectedSettingsItem(), 
+                                            stateManager->GetSettingsScrollOffset());
+                break;
+            case Lehran::GameState::STATE_SCENE:
                 sceneManager->RenderBackground();
                 sceneManager->RenderTransition();
                 break;
-            case STATE_DIALOGUE:
+            case Lehran::GameState::STATE_DIALOGUE:
                 sceneManager->RenderBackground();
                 dialogueSystem->Render();
                 break;
-            case STATE_EASTER_EGG:
-                RenderEasterEgg();
+            case Lehran::GameState::STATE_MAP:
+                mapManager->Render();
+                break;
+            case Lehran::GameState::STATE_EASTER_EGG:
+                renderManager->RenderEasterEgg();
                 break;
             default:
                 break;
         }
     }
     
-    void RenderSplash() {
-        // Dark blue background
-        SDL_SetRenderDrawColor(renderer, 20, 20, 40, 255);
-        SDL_RenderClear(renderer);
-        
-        // Calculate alpha based on timer
-        // Fade in: 0.0 to 1.0 seconds (0 to 255)
-        // Stay: 1.0 to 2.5 seconds (255)
-        // Fade out: 2.5 to 3.5 seconds (255 to 0)
-        int alpha = 255;
-        if (splashTimer < 1.0f) {
-            // Fade in
-            alpha = (int)(splashTimer * 255.0f);
-        } else if (splashTimer > 2.5f) {
-            // Fade out
-            float fadeOutProgress = (splashTimer - 2.5f) / 1.0f;  // 0.0 to 1.0
-            alpha = (int)(255.0f * (1.0f - fadeOutProgress));
-        }
-        
-        // Render "Lehran Engine" text with fade
-        RenderText("LEHRAN ENGINE", SCREEN_WIDTH / 2, 250, fontLarge, {200, 200, 255, (Uint8)alpha});
-    }
-    
-    void RenderTitle() {
-        // Gradient background (simplified)
-        for (int y = 0; y < SCREEN_HEIGHT; y++) {
-            int colorValue = 20 + (y * 40 / SCREEN_HEIGHT);
-            SDL_SetRenderDrawColor(renderer, colorValue, colorValue, colorValue + 20, 255);
-            SDL_RenderDrawLine(renderer, 0, y, SCREEN_WIDTH, y);
-        }
-        
-        // Game title
-        RenderText(gameName.c_str(), SCREEN_WIDTH / 2, 150, fontLarge, {255, 255, 255, 255});
-        
-        // Menu items
-        const char* menuItems[] = {"New Game", "Load Game", "Exit"};
-        for (int i = 0; i < 3; i++) {
-            SDL_Color color = (i == selectedMenuItem) ? SDL_Color{255, 255, 100, 255} : SDL_Color{200, 200, 200, 255};
-            
-            // Draw arrow for selected item
-            if (i == selectedMenuItem) {
-                RenderText(">", SCREEN_WIDTH / 2 - 100, 300 + i * 60, fontMedium, {255, 255, 100, 255});
-            }
-            
-            RenderText(menuItems[i], SCREEN_WIDTH / 2, 300 + i * 60, fontMedium, color);
-        }
-        
-        // Version info
-        std::string version = "v" + gameData.value("version", "0.0") + " | Engine v0.1";
-        RenderText(version.c_str(), SCREEN_WIDTH - 10, SCREEN_HEIGHT - 10, fontSmall, {100, 100, 100, 255}, true);
-    }
-    
-    void RenderEasterEgg() {
-        // Dark red background
-        SDL_SetRenderDrawColor(renderer, 30, 10, 10, 255);
-        SDL_RenderClear(renderer);
-        
-        // Multi-line message
-        RenderText("...", SCREEN_WIDTH / 2, 200, fontLarge, {255, 200, 200, 255});
-        RenderText("But there is no game to play.", SCREEN_WIDTH / 2, 260, fontMedium, {200, 200, 200, 255});
-        RenderText("Seriously, did you even try?", SCREEN_WIDTH / 2, 320, fontMedium, {200, 200, 200, 255});
-        RenderText("Press any key to return...", SCREEN_WIDTH / 2, 500, fontSmall, {150, 150, 150, 255});
-    }
-    
-    void RenderText(const char* text, int x, int y, TTF_Font* font, SDL_Color color, bool alignRight = false) {
-        if (!font || !text) return;
-        
-        SDL_Surface* surface = TTF_RenderText_Blended(font, text, color);
-        if (!surface) return;
-        
-        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-        if (!texture) {
-            SDL_FreeSurface(surface);
-            return;
-        }
-        
-        // Set texture alpha if color has alpha component
-        if (color.a < 255) {
-            SDL_SetTextureAlphaMod(texture, color.a);
-        }
-        
-        SDL_Rect destRect;
-        destRect.w = surface->w;
-        destRect.h = surface->h;
-        
-        if (alignRight) {
-            destRect.x = x - surface->w;
-            destRect.y = y - surface->h;
-        } else {
-            destRect.x = x - surface->w / 2;
-            destRect.y = y - surface->h / 2;
-        }
-        
-        SDL_RenderCopy(renderer, texture, nullptr, &destRect);
-        
-        SDL_DestroyTexture(texture);
-        SDL_FreeSurface(surface);
-    }
-    
-    void RenderText(const std::string& text, int x, int y, TTF_Font* font, SDL_Color color, bool alignRight = false) {
-        RenderText(text.c_str(), x, y, font, color, alignRight);
-    }
-    
     void Cleanup() {
-        // Clean up modular systems
+        delete mapManager;
         delete dialogueSystem;
         delete sceneManager;
         delete saveSlotScreen;
         delete textureManager;
         delete saveManager;
+        delete inputHandler;
+        delete stateManager;
+        delete renderManager;
+        delete configManager;
         
         if (bgm) {
             Mix_FreeMusic(bgm);

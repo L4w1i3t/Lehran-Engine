@@ -10,7 +10,9 @@ class SaveSlotScreen {
 public:
     enum class Mode {
         NEW_GAME,   // Selecting slot for new game
-        LOAD_GAME   // Selecting slot to load
+        LOAD_GAME,  // Selecting slot to load
+        COPY_DATA,  // Selecting slot to copy from
+        DELETE_DATA // Selecting slot to delete
     };
     
     struct SlotInfo {
@@ -34,6 +36,12 @@ private:
     std::vector<SlotInfo> slots;
     bool shouldReturn; // Return to title screen
     int selectedSlotToStart; // The slot chosen to begin/load
+    
+    // Confirmation dialog state
+    bool showingConfirmation;
+    int confirmationChoice;  // 0 = Yes, 1 = No
+    int slotToModify;  // The slot being copied/deleted
+    int targetSlot;  // For copy operation, the destination slot
     
     void LoadSlotInfo();
     void RenderText(const std::string& text, int x, int y, TTF_Font* font, SDL_Color color, bool centered = true);

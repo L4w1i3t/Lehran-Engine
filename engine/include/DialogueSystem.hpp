@@ -12,6 +12,10 @@ public:
         std::string speakerName;
         std::string text;
         std::string portraitPath; // Optional portrait image
+        std::string spriteLeft;   // Sprite on left side
+        std::string spriteRight;  // Sprite on right side
+        bool flipSpriteLeft = false;  // Flip left sprite horizontally
+        bool flipSpriteRight = false; // Flip right sprite horizontally
     };
     
     struct Choice {
@@ -42,9 +46,9 @@ private:
     bool showingChoices;
     
     // UI constants
-    static const int DIALOGUE_BOX_HEIGHT = 150;
-    static const int DIALOGUE_BOX_Y = 450;
-    static const int PORTRAIT_SIZE = 120;
+    static const int DIALOGUE_BOX_HEIGHT = 270;
+    static const int DIALOGUE_BOX_Y = 810;
+    static const int PORTRAIT_SIZE = 216;
     
     void RenderText(const std::string& text, int x, int y, TTF_Font* font, SDL_Color color, bool centered = false);
     std::vector<std::string> WrapText(const std::string& text, TTF_Font* font, int maxWidth);

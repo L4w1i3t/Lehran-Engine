@@ -1,3 +1,0 @@
-"""
-Lehran Engine GUI Package
-"""

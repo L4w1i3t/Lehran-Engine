@@ -91,8 +91,35 @@ void DialogueSystem::Render() {
     
     const DialogueLine& currentLine = dialogueLines[currentLineIndex];
     
+    // Render sprites (left and right)
+    if (!currentLine.spriteLeft.empty()) {
+        SDL_Texture* spriteLeft = textureManager->LoadTexture(currentLine.spriteLeft);
+        if (spriteLeft) {
+            // Get actual sprite dimensions
+            int spriteWidth, spriteHeight;
+            SDL_QueryTexture(spriteLeft, nullptr, nullptr, &spriteWidth, &spriteHeight);
+            // Position on left side - bottom aligned
+            SDL_Rect dstRect = {180, 1080 - spriteHeight, spriteWidth, spriteHeight};
+            SDL_RendererFlip flip = currentLine.flipSpriteLeft ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+            SDL_RenderCopyEx(renderer, spriteLeft, nullptr, &dstRect, 0.0, nullptr, flip);
+        }
+    }
+    
+    if (!currentLine.spriteRight.empty()) {
+        SDL_Texture* spriteRight = textureManager->LoadTexture(currentLine.spriteRight);
+        if (spriteRight) {
+            // Get actual sprite dimensions
+            int spriteWidth, spriteHeight;
+            SDL_QueryTexture(spriteRight, nullptr, nullptr, &spriteWidth, &spriteHeight);
+            // Position on right side - bottom aligned
+            SDL_Rect dstRect = {1920 - 180 - spriteWidth, 1080 - spriteHeight, spriteWidth, spriteHeight};
+            SDL_RendererFlip flip = currentLine.flipSpriteRight ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+            SDL_RenderCopyEx(renderer, spriteRight, nullptr, &dstRect, 0.0, nullptr, flip);
+        }
+    }
+    
     // Render dialogue box background
-    SDL_Rect dialogueBox = {50, DIALOGUE_BOX_Y, 700, DIALOGUE_BOX_HEIGHT};
+    SDL_Rect dialogueBox = {90, DIALOGUE_BOX_Y, 1740, DIALOGUE_BOX_HEIGHT};
     SDL_SetRenderDrawColor(renderer, 20, 20, 40, 230);
     SDL_RenderFillRect(renderer, &dialogueBox);
     
@@ -104,40 +131,40 @@ void DialogueSystem::Render() {
     if (!currentLine.portraitPath.empty()) {
         SDL_Texture* portrait = textureManager->LoadTexture(currentLine.portraitPath);
         if (portrait) {
-            textureManager->RenderTexture(portrait, 60, DIALOGUE_BOX_Y + 15, PORTRAIT_SIZE, PORTRAIT_SIZE);
+            textureManager->RenderTexture(portrait, 108, DIALOGUE_BOX_Y + 27, PORTRAIT_SIZE, PORTRAIT_SIZE);
         }
     }
     
     // Render speaker name
     if (!currentLine.speakerName.empty()) {
-        int nameX = currentLine.portraitPath.empty() ? 70 : 190;
-        RenderText(currentLine.speakerName, nameX, DIALOGUE_BOX_Y + 20, fontMedium, 
+        int nameX = currentLine.portraitPath.empty() ? 126 : 342;
+        RenderText(currentLine.speakerName, nameX, DIALOGUE_BOX_Y + 36, fontMedium, 
                    {255, 255, 100, 255}, false);
     }
     
     // Render dialogue text (wrapped)
-    int textX = currentLine.portraitPath.empty() ? 70 : 190;
-    int textY = DIALOGUE_BOX_Y + (currentLine.speakerName.empty() ? 30 : 55);
-    int maxWidth = 520;
+    int textX = currentLine.portraitPath.empty() ? 126 : 342;
+    int textY = DIALOGUE_BOX_Y + (currentLine.speakerName.empty() ? 54 : 99);
+    int maxWidth = 1400;
     
     std::vector<std::string> wrappedLines = WrapText(currentLine.text, fontSmall, maxWidth);
     for (size_t i = 0; i < wrappedLines.size(); i++) {
-        RenderText(wrappedLines[i], textX, textY + (int)i * 25, fontSmall, 
+        RenderText(wrappedLines[i], textX, textY + (int)i * 45, fontSmall, 
                    {255, 255, 255, 255}, false);
     }
     
     // Render "Press Enter to continue" prompt
     if (!showingChoices && currentLineIndex < (int)dialogueLines.size() - 1) {
-        RenderText("▼", 400, DIALOGUE_BOX_Y + DIALOGUE_BOX_HEIGHT - 20, fontSmall, 
+        RenderText("V", 960, DIALOGUE_BOX_Y + DIALOGUE_BOX_HEIGHT - 36, fontSmall, 
                    {200, 200, 200, 255}, true);
     }
     
     // Render choices (if showing)
     if (showingChoices) {
-        int choiceY = DIALOGUE_BOX_Y - 60 * (int)currentChoices.size() - 20;
+        int choiceY = DIALOGUE_BOX_Y - 108 * (int)currentChoices.size() - 36;
         
         for (size_t i = 0; i < currentChoices.size(); i++) {
-            SDL_Rect choiceBox = {200, choiceY + (int)i * 60, 400, 50};
+            SDL_Rect choiceBox = {660, choiceY + (int)i * 108, 600, 90};
             
             if ((int)i == selectedChoice) {
                 SDL_SetRenderDrawColor(renderer, 80, 80, 120, 230);
@@ -152,7 +179,7 @@ void DialogueSystem::Render() {
             SDL_Color textColor = ((int)i == selectedChoice) ? 
                 SDL_Color{255, 255, 100, 255} : SDL_Color{200, 200, 200, 255};
             
-            RenderText(currentChoices[i].text, 400, choiceY + (int)i * 60 + 25, 
+            RenderText(currentChoices[i].text, 960, choiceY + (int)i * 108 + 45, 
                        fontSmall, textColor, true);
         }
     }

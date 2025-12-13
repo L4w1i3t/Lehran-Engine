@@ -237,7 +237,7 @@ SaveManager::~SaveManager() {
 bool SaveManager::save(const SaveData& data, int slot_number, bool use_json) {
     // Determine format based on build type
 #ifdef _DEBUG
-    use_json = true; // Always use JSON in debug builds
+    use_json = false; // Always use JSON in debug builds
 #endif
     
     std::string path = get_slot_path(slot_number, use_json);
@@ -605,29 +605,39 @@ bool SaveManager::read_bool(const uint8_t* data, size_t& offset) {
 }
 
 void SaveManager::ensure_save_directory() {
+    std::string base_dir;
+    
 #ifdef _WIN32
-    // Windows: %APPDATA%/LehranEngine/saves
+    // Windows: %APPDATA%/LehranEngine
     char path[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
-        save_directory_ = std::string(path) + "/LehranEngine/saves";
+        base_dir = std::string(path) + "/LehranEngine";
     }
 #elif __APPLE__
-    // macOS: ~/Library/Application Support/LehranEngine/saves
+    // macOS: ~/Library/Application Support/LehranEngine
     const char* home = getenv("HOME");
     if (home) {
-        save_directory_ = std::string(home) + "/Library/Application Support/LehranEngine/saves";
+        base_dir = std::string(home) + "/Library/Application Support/LehranEngine";
     }
 #else
-    // Linux: ~/.local/share/LehranEngine/saves
+    // Linux: ~/.local/share/LehranEngine
     const char* home = getenv("HOME");
     if (home) {
-        save_directory_ = std::string(home) + "/.local/share/LehranEngine/saves";
+        base_dir = std::string(home) + "/.local/share/LehranEngine";
     }
 #endif
+    
+    // Add project subdirectory if set
+    if (!project_subdirectory_.empty()) {
+        save_directory_ = base_dir + "/" + project_subdirectory_ + "/saves";
+    } else {
+        save_directory_ = base_dir + "/saves";
+    }
     
     // Create directory if it doesn't exist
     try {
         fs::create_directories(save_directory_);
+        std::cout << "Save directory: " << save_directory_ << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Failed to create save directory: " << e.what() << std::endl;
     }
@@ -639,6 +649,45 @@ bool SaveManager::detect_format(const std::string& path) {
         return true; // JSON
     }
     return false; // Binary
+}
+
+void SaveManager::set_project_subdirectory(const std::string& project_name) {
+    if (project_name.empty()) {
+        project_subdirectory_.clear();
+    } else {
+        project_subdirectory_ = sanitize_project_name(project_name);
+    }
+    // Recreate save directory with new subdirectory
+    ensure_save_directory();
+}
+
+std::string SaveManager::sanitize_project_name(const std::string& name) const {
+    std::string sanitized;
+    sanitized.reserve(name.length());
+    
+    for (char c : name) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+            sanitized += c;
+        } else if (std::isspace(static_cast<unsigned char>(c))) {
+            // Replace spaces with underscores
+            if (!sanitized.empty() && sanitized.back() != '_') {
+                sanitized += '_';
+            }
+        }
+        // Skip other special characters
+    }
+    
+    // Remove trailing underscores
+    while (!sanitized.empty() && sanitized.back() == '_') {
+        sanitized.pop_back();
+    }
+    
+    // If empty after sanitization, use default
+    if (sanitized.empty()) {
+        sanitized = "default_project";
+    }
+    
+    return sanitized;
 }
 
 } // namespace Lehran

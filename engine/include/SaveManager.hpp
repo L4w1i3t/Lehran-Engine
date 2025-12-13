@@ -172,8 +172,16 @@ public:
      */
     std::string get_save_directory() const;
     
+    /**
+     * Set project-specific subdirectory (e.g., "SunderedTestament")
+     * This creates saves in: LehranEngine/<project_name>/saves/
+     * If empty, uses default: LehranEngine/saves/
+     */
+    void set_project_subdirectory(const std::string& project_name);
+    
 private:
     std::string save_directory_;
+    std::string project_subdirectory_;  // Optional project-specific subdirectory
     static constexpr uint32_t SAVE_VERSION = 1;
     static constexpr uint32_t MAGIC_NUMBER = 0x4C485246; // "LHRF" (Lehran Fire)
     
@@ -215,6 +223,7 @@ private:
     // Utility
     void ensure_save_directory();
     bool detect_format(const std::string& path);
+    std::string sanitize_project_name(const std::string& name) const;
 };
 
 } // namespace Lehran

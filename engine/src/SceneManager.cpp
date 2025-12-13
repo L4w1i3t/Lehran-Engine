@@ -45,8 +45,8 @@ void SceneManager::Update(float deltaTime) {
 
 void SceneManager::RenderBackground() {
     if (backgroundTexture) {
-        // Render background scaled to screen size (800x600)
-        textureManager->RenderTexture(backgroundTexture, 0, 0, 800, 600);
+        // Render background scaled to screen size (1920x1080)
+        textureManager->RenderTexture(backgroundTexture, 0, 0, 1920, 1080);
     } else {
         // Default black background
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -77,7 +77,7 @@ void SceneManager::RenderTransition() {
     // Render black overlay with alpha
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, alpha);
-    SDL_Rect fullScreen = {0, 0, 800, 600};
+    SDL_Rect fullScreen = {0, 0, 1920, 1080};
     SDL_RenderFillRect(renderer, &fullScreen);
 }
 

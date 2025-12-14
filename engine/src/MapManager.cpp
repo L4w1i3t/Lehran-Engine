@@ -225,8 +225,17 @@ bool MapManager::LoadMap(const std::string& mapFile) {
                 unit.y = unitJson.value("y", 0);
                 
                 // Load unit data from units.json if unit_id is specified
-                if (!unit.unitId.empty() && unitsData.contains(unit.unitId)) {
-                    const auto& unitData = unitsData[unit.unitId];
+                // units.json is now organized as: { "player": { "alvis": {...} }, "enemy": {...} }
+                json unitData;
+                bool foundUnit = false;
+                if (!unit.unitId.empty() && unitsData.contains(unit.type)) {
+                    if (unitsData[unit.type].contains(unit.unitId)) {
+                        unitData = unitsData[unit.type][unit.unitId];
+                        foundUnit = true;
+                    }
+                }
+                
+                if (foundUnit) {
                     unit.name = unitData.value("name", "Unknown");
                     std::string classId = unitData.value("class", "");
                     unit.className = GetClassDisplayName(classId);
@@ -1056,69 +1065,82 @@ WeaponData MapManager::GetWeaponData(const std::string& weaponId) const {
     weaponData.id = weaponId;
     weaponData.name = weaponId;  // Default to ID if not found
     
-    // Search in generic weapons
-    if (weaponsData.contains("generic") && weaponsData["generic"].is_array()) {
-        for (const auto& weapon : weaponsData["generic"]) {
-            if (weapon.value("id", "") == weaponId) {
-                weaponData.name = weapon.value("name", weaponId);
-                weaponData.type = weapon.value("type", "");
-                weaponData.might = weapon.value("might", 0);
-                weaponData.hit = weapon.value("hit", 0);
-                weaponData.crit = weapon.value("crit", 0);
-                weaponData.weight = weapon.value("weight", 0);
-                weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
-                if (weapon.contains("range") && weapon["range"].is_array()) {
-                    for (const auto& r : weapon["range"]) {
-                        weaponData.range.push_back(r.get<int>());
+    // New structure: { "generic": { "sword": [...], "axe": [...] }, "prf": { "sword": [...] } }
+    // Search in generic weapons (organized by weapon type)
+    if (weaponsData.contains("generic") && weaponsData["generic"].is_object()) {
+        for (auto& [weaponType, weaponArray] : weaponsData["generic"].items()) {
+            if (weaponArray.is_array()) {
+                for (const auto& weapon : weaponArray) {
+                    if (weapon.value("id", "") == weaponId) {
+                        weaponData.name = weapon.value("name", weaponId);
+                        weaponData.type = weaponType; // Type is the key (sword, axe, anima, etc.)
+                        weaponData.might = weapon.value("might", 0);
+                        weaponData.hit = weapon.value("hit", 0);
+                        weaponData.crit = weapon.value("crit", 0);
+                        weaponData.weight = weapon.value("weight", 0);
+                        weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
+                        if (weapon.contains("range") && weapon["range"].is_array()) {
+                            for (const auto& r : weapon["range"]) {
+                                weaponData.range.push_back(r.get<int>());
+                            }
+                        }
+                        weaponData.isPRF = false;
+                        return weaponData;
                     }
                 }
-                weaponData.isPRF = false;
-                return weaponData;
             }
         }
     }
     
-    // Search in PRF weapons
-    if (weaponsData.contains("prf") && weaponsData["prf"].is_array()) {
-        for (const auto& weapon : weaponsData["prf"]) {
-            if (weapon.value("id", "") == weaponId) {
-                weaponData.name = weapon.value("name", weaponId);
-                weaponData.type = weapon.value("type", "");
-                weaponData.might = weapon.value("might", 0);
-                weaponData.hit = weapon.value("hit", 0);
-                weaponData.crit = weapon.value("crit", 0);
-                weaponData.weight = weapon.value("weight", 0);
-                weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
-                if (weapon.contains("range") && weapon["range"].is_array()) {
-                    for (const auto& r : weapon["range"]) {
-                        weaponData.range.push_back(r.get<int>());
+    // Search in PRF weapons (organized by weapon type)
+    if (weaponsData.contains("prf") && weaponsData["prf"].is_object()) {
+        for (auto& [weaponType, weaponArray] : weaponsData["prf"].items()) {
+            if (weaponArray.is_array()) {
+                for (const auto& weapon : weaponArray) {
+                    if (weapon.value("id", "") == weaponId) {
+                        weaponData.name = weapon.value("name", weaponId);
+                        weaponData.type = weaponType; // Type is the key (sword, dark, stone, etc.)
+                        weaponData.might = weapon.value("might", 0);
+                        weaponData.hit = weapon.value("hit", 0);
+                        weaponData.crit = weapon.value("crit", 0);
+                        weaponData.weight = weapon.value("weight", 0);
+                        weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
+                        if (weapon.contains("range") && weapon["range"].is_array()) {
+                            for (const auto& r : weapon["range"]) {
+                                weaponData.range.push_back(r.get<int>());
+                            }
+                        }
+                        weaponData.user = weapon.value("user", "");
+                        weaponData.isPRF = true;
+                        return weaponData;
                     }
                 }
-                weaponData.user = weapon.value("user", "");
-                weaponData.isPRF = true;
-                return weaponData;
             }
         }
     }
     
-    // Search in attributed weapons
-    if (weaponsData.contains("attributed") && weaponsData["attributed"].is_array()) {
-        for (const auto& weapon : weaponsData["attributed"]) {
-            if (weapon.value("id", "") == weaponId) {
-                weaponData.name = weapon.value("name", weaponId);
-                weaponData.type = weapon.value("type", "");
-                weaponData.might = weapon.value("might", 0);
-                weaponData.hit = weapon.value("hit", 0);
-                weaponData.crit = weapon.value("crit", 0);
-                weaponData.weight = weapon.value("weight", 0);
-                weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
-                if (weapon.contains("range") && weapon["range"].is_array()) {
-                    for (const auto& r : weapon["range"]) {
-                        weaponData.range.push_back(r.get<int>());
+    // Search in attributed weapons (if exists - organized by weapon type)
+    if (weaponsData.contains("attributed") && weaponsData["attributed"].is_object()) {
+        for (auto& [weaponType, weaponArray] : weaponsData["attributed"].items()) {
+            if (weaponArray.is_array()) {
+                for (const auto& weapon : weaponArray) {
+                    if (weapon.value("id", "") == weaponId) {
+                        weaponData.name = weapon.value("name", weaponId);
+                        weaponData.type = weaponType;
+                        weaponData.might = weapon.value("might", 0);
+                        weaponData.hit = weapon.value("hit", 0);
+                        weaponData.crit = weapon.value("crit", 0);
+                        weaponData.weight = weapon.value("weight", 0);
+                        weaponData.durability = weapon.contains("durability") && weapon["durability"].is_null() ? -1 : weapon.value("durability", 0);
+                        if (weapon.contains("range") && weapon["range"].is_array()) {
+                            for (const auto& r : weapon["range"]) {
+                                weaponData.range.push_back(r.get<int>());
+                            }
+                        }
+                        weaponData.isPRF = false;
+                        return weaponData;
                     }
                 }
-                weaponData.isPRF = false;
-                return weaponData;
             }
         }
     }
